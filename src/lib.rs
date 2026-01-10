@@ -19,25 +19,33 @@
 //! editor.save("package-1.0.1-py3-none-any.whl").unwrap();
 //! ```
 
+pub mod elf;
 pub mod error;
 pub mod metadata;
 pub mod name;
 pub mod record;
 pub mod wheel;
+pub mod wheel_info;
 
 #[cfg(feature = "python")]
 mod python;
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
+use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 
+pub use elf::ElfInfo;
+pub use elf::ElfModification;
+pub use error::ElfError;
 pub use error::MetadataError;
 pub use error::RecordError;
 pub use error::ValidationError;
 pub use error::ValidationResult;
 pub use error::WheelError;
+pub use error::WheelInfoError;
 pub use metadata::Metadata;
 pub use name::dist_info_name;
 pub use name::normalize_dist_info_name;
@@ -47,6 +55,9 @@ pub use record::hash_content;
 pub use wheel::WheelReader;
 pub use wheel::validate_wheel;
 pub use wheel::write_modified;
+pub use wheel::write_modified_extended;
+pub use wheel_info::WheelInfo;
+pub use wheel_info::WheelTag;
 
 /// High-level API for editing Python wheel files
 ///
@@ -57,6 +68,11 @@ pub struct WheelEditor {
     metadata: Metadata,
     record: Record,
     dist_info_prefix: String,
+    wheel_info: WheelInfo,
+    /// Files that have been modified (path -> new content)
+    modified_files: HashMap<String, Vec<u8>>,
+    /// Whether the wheel_info has been modified (e.g., platform tag changed)
+    wheel_info_modified: bool,
 }
 
 impl WheelEditor {
@@ -69,6 +85,7 @@ impl WheelEditor {
 
         let metadata = wheel_reader.read_metadata()?;
         let record = wheel_reader.read_record()?;
+        let wheel_info = wheel_reader.read_wheel_info()?;
         let dist_info_prefix = wheel_reader.dist_info_prefix().to_string();
 
         Ok(Self {
@@ -76,6 +93,9 @@ impl WheelEditor {
             metadata,
             record,
             dist_info_prefix,
+            wheel_info,
+            modified_files: HashMap::new(),
+            wheel_info_modified: false,
         })
     }
 
@@ -219,6 +239,121 @@ impl WheelEditor {
         &mut self.metadata
     }
 
+    /// Get access to the wheel info (WHEEL file)
+    pub fn wheel_info(&self) -> &WheelInfo {
+        &self.wheel_info
+    }
+
+    /// Get mutable access to the wheel info
+    pub fn wheel_info_mut(&mut self) -> &mut WheelInfo {
+        &mut self.wheel_info
+    }
+
+    /// Get the primary platform tag
+    pub fn platform_tag(&self) -> Option<&str> {
+        self.wheel_info.platform()
+    }
+
+    /// Set the platform tag for all tags in the wheel
+    ///
+    /// This modifies the WHEEL file to change the platform (e.g., from
+    /// "linux_x86_64" to "manylinux_2_28_x86_64").
+    pub fn set_platform_tag(&mut self, platform: &str) {
+        self.wheel_info.set_platform(platform);
+        self.wheel_info_modified = true;
+    }
+
+    /// Get the RPATH of a specific file in the wheel
+    ///
+    /// Returns the effective RPATH (prefers RUNPATH over RPATH).
+    /// Returns an error if the file is not found or is not a valid ELF.
+    pub fn get_rpath(&self, path: &str) -> Result<Option<String>, WheelError> {
+        let file = File::open(&self.path)?;
+        let reader = BufReader::new(file);
+        let mut archive = zip::ZipArchive::new(reader)?;
+
+        let mut entry = archive
+            .by_name(path)
+            .map_err(|_| WheelError::Elf(error::ElfError::FileNotFound(path.to_string())))?;
+
+        let mut content = Vec::new();
+        entry.read_to_end(&mut content)?;
+
+        elf::get_rpath(&content).map_err(WheelError::from)
+    }
+
+    /// Set the RPATH for files matching a glob pattern
+    ///
+    /// This modifies all ELF files in the wheel that match the given glob pattern.
+    /// Returns the number of files modified.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use editwheel::WheelEditor;
+    ///
+    /// let mut editor = WheelEditor::open("torch-2.0.0-cp311-cp311-linux_x86_64.whl").unwrap();
+    /// let count = editor.set_rpath("torch/lib/*.so", "$ORIGIN:$ORIGIN/../lib").unwrap();
+    /// println!("Modified {} files", count);
+    /// ```
+    pub fn set_rpath(&mut self, pattern: &str, rpath: &str) -> Result<usize, WheelError> {
+        let glob_pattern = glob::Pattern::new(pattern)?;
+
+        // Open the archive to find matching files
+        let file = File::open(&self.path)?;
+        let reader = BufReader::new(file);
+        let mut archive = zip::ZipArchive::new(reader)?;
+
+        // Find all files matching the pattern
+        let mut matching_files = Vec::new();
+        for i in 0..archive.len() {
+            let entry = archive.by_index(i)?;
+            let name = entry.name().to_string();
+            if glob_pattern.matches(&name) {
+                matching_files.push(name);
+            }
+        }
+
+        // Modify each matching file
+        let mut modified_count = 0;
+        for file_path in matching_files {
+            // Read the file content
+            let mut entry = archive.by_name(&file_path)?;
+            let mut content = Vec::new();
+            entry.read_to_end(&mut content)?;
+            drop(entry); // Release borrow
+
+            // Check if it's an ELF file (magic bytes: 0x7F 'E' 'L' 'F')
+            if content.len() < 4 || &content[0..4] != b"\x7FELF" {
+                continue; // Skip non-ELF files
+            }
+
+            // Modify the ELF file - use RUNPATH (preferred over RPATH)
+            let modifications = vec![ElfModification::SetRunpath(rpath.to_string())];
+            match elf::modify_elf(&content, &modifications) {
+                Ok(modified_content) => {
+                    self.modified_files.insert(file_path, modified_content);
+                    modified_count += 1;
+                }
+                Err(e) => {
+                    // Log or handle error - for now, skip files that can't be modified
+                    eprintln!("Warning: Failed to modify {}: {}", file_path, e);
+                }
+            }
+        }
+
+        Ok(modified_count)
+    }
+
+    /// Check if any files have been modified
+    pub fn has_modified_files(&self) -> bool {
+        !self.modified_files.is_empty()
+    }
+
+    /// Get the paths of all modified files
+    pub fn modified_file_paths(&self) -> Vec<&str> {
+        self.modified_files.keys().map(|s| s.as_str()).collect()
+    }
+
     /// Validate all file hashes in the wheel
     ///
     /// This reads and hashes every file in the wheel to verify integrity.
@@ -233,7 +368,8 @@ impl WheelEditor {
     /// Save the modified wheel to a new file
     ///
     /// This achieves constant-time performance by copying unchanged files
-    /// as raw compressed bytes. Only METADATA and RECORD are rewritten.
+    /// as raw compressed bytes. Modified files (METADATA, RECORD, and any
+    /// ELF files with changed RPATH) are rewritten with new content.
     pub fn save(&self, output_path: impl AsRef<Path>) -> Result<(), WheelError> {
         let output_path = output_path.as_ref();
 
@@ -248,15 +384,30 @@ impl WheelEditor {
         // Create output file
         let output_file = File::create(output_path)?;
 
-        // Write modified wheel
-        write_modified(
-            &mut source_archive,
-            output_file,
-            &self.metadata,
-            &self.record,
-            &self.dist_info_prefix,
-            &new_dist_info,
-        )?;
+        // Use extended writer if we have modified files or wheel info changes
+        if !self.modified_files.is_empty() || self.wheel_info_modified {
+            // Use extended writer which handles modified files and WHEEL file updates
+            write_modified_extended(
+                &mut source_archive,
+                output_file,
+                &self.metadata,
+                &self.record,
+                &self.dist_info_prefix,
+                &new_dist_info,
+                &self.modified_files,
+                Some(&self.wheel_info),
+            )?;
+        } else {
+            // Use the original writer for backward compatibility
+            write_modified(
+                &mut source_archive,
+                output_file,
+                &self.metadata,
+                &self.record,
+                &self.dist_info_prefix,
+                &new_dist_info,
+            )?;
+        }
 
         Ok(())
     }

@@ -591,3 +591,173 @@ fn test_pip_compatibility_after_edit() {
         );
     }
 }
+
+/// Test wheel with platform native extensions
+const NATIVE_TEST_WHEEL: TestWheel = TestWheel {
+    name: "markupsafe",
+    // markupsafe has a small .so file for speedups
+    url: "https://files.pythonhosted.org/packages/5a/94/d056bf5dbadf7f4b193ee2a132b3d49ffa1602371e3847518b2982045425/MarkupSafe-2.1.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    description: "Small native wheel with .so file",
+};
+
+#[test]
+fn test_platform_tag_modification() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let filename = NATIVE_TEST_WHEEL.url.split('/').last().unwrap();
+    let wheel_path = temp_dir.path().join(filename);
+
+    println!("\n\n### Testing platform tag modification ###\n");
+
+    // Download wheel
+    download_wheel(NATIVE_TEST_WHEEL.url, &wheel_path).expect("Failed to download wheel");
+
+    // Open the wheel
+    let mut editor = WheelEditor::open(&wheel_path).expect("Failed to open wheel");
+
+    // Check original platform tag
+    let original_platform = editor.platform_tag().map(|s| s.to_string());
+    println!("Original platform tag: {:?}", original_platform);
+
+    // Modify platform tag
+    let new_platform = "manylinux_2_28_x86_64";
+    editor.set_platform_tag(new_platform);
+
+    assert_eq!(
+        editor.platform_tag(),
+        Some(new_platform),
+        "Platform tag should be updated in memory"
+    );
+
+    // Save and validate
+    let edited_path = temp_dir.path().join("markupsafe_edited.whl");
+    editor.save(&edited_path).expect("Failed to save edited wheel");
+
+    // Verify the change persisted
+    let new_editor = WheelEditor::open(&edited_path).expect("Failed to open edited wheel");
+    assert_eq!(
+        new_editor.platform_tag(),
+        Some(new_platform),
+        "Platform tag should persist after save"
+    );
+
+    // Validate the wheel is still valid
+    validate_wheel_full(&edited_path).expect("Edited wheel should be valid");
+
+    println!("\n✅ Platform tag modification test passed!");
+}
+
+#[test]
+fn test_set_rpath_on_native_wheel() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let filename = NATIVE_TEST_WHEEL.url.split('/').last().unwrap();
+    let wheel_path = temp_dir.path().join(filename);
+
+    println!("\n\n### Testing set_rpath on native wheel ###\n");
+
+    // Download wheel
+    download_wheel(NATIVE_TEST_WHEEL.url, &wheel_path).expect("Failed to download wheel");
+
+    // Open the wheel
+    let mut editor = WheelEditor::open(&wheel_path).expect("Failed to open wheel");
+
+    // Check if there are any .so files we can modify
+    let file = File::open(&wheel_path).expect("Failed to open wheel");
+    let reader = BufReader::new(file);
+    let mut archive = zip::ZipArchive::new(reader).expect("Failed to parse ZIP");
+
+    let so_files: Vec<String> = (0..archive.len())
+        .filter_map(|i| {
+            let entry = archive.by_index(i).ok()?;
+            let name = entry.name().to_string();
+            if name.ends_with(".so") || name.contains(".so.") {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    println!("Found {} .so files in wheel:", so_files.len());
+    for path in &so_files {
+        println!("  - {}", path);
+    }
+
+    if so_files.is_empty() {
+        println!("⚠️ No .so files found in wheel, skipping RPATH test");
+        return;
+    }
+
+    // Set RPATH on all .so files
+    let new_rpath = "$ORIGIN:$ORIGIN/../lib";
+    let count = editor
+        .set_rpath("**/*.so", new_rpath)
+        .expect("Failed to set RPATH");
+
+    println!("\nModified RPATH on {} files", count);
+    assert!(count > 0, "Should have modified at least one file");
+    assert!(
+        editor.has_modified_files(),
+        "Editor should report modified files"
+    );
+
+    // Save and validate
+    let edited_path = temp_dir.path().join("markupsafe_rpath.whl");
+    editor.save(&edited_path).expect("Failed to save edited wheel");
+
+    // Validate the wheel is still valid
+    validate_wheel_full(&edited_path).expect("Edited wheel should be valid");
+
+    println!("\n✅ set_rpath test passed!");
+}
+
+#[test]
+fn test_combined_elf_and_metadata_edits() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let filename = NATIVE_TEST_WHEEL.url.split('/').last().unwrap();
+    let wheel_path = temp_dir.path().join(filename);
+
+    println!("\n\n### Testing combined ELF and metadata edits ###\n");
+
+    // Download wheel
+    download_wheel(NATIVE_TEST_WHEEL.url, &wheel_path).expect("Failed to download wheel");
+
+    // Open the wheel
+    let mut editor = WheelEditor::open(&wheel_path).expect("Failed to open wheel");
+
+    // Make metadata edits
+    let new_version = format!("{}+custom", editor.version());
+    editor.set_version(&new_version);
+    editor.add_requires_dist("nccl-lib>=1.0");
+
+    // Set platform tag
+    editor.set_platform_tag("manylinux_2_28_x86_64");
+
+    // Set RPATH on .so files
+    let rpath_count = editor
+        .set_rpath("**/*.so", "$ORIGIN:$ORIGIN/../../custom_lib")
+        .unwrap_or(0);
+    println!("Modified RPATH on {} files", rpath_count);
+
+    // Save and validate
+    let edited_path = temp_dir.path().join("markupsafe_combined.whl");
+    editor.save(&edited_path).expect("Failed to save edited wheel");
+
+    // Verify all changes
+    let new_editor = WheelEditor::open(&edited_path).expect("Failed to open edited wheel");
+
+    assert_eq!(new_editor.version(), new_version);
+    assert!(
+        new_editor.requires_dist().contains(&"nccl-lib>=1.0".to_string()),
+        "Should contain new dependency"
+    );
+    assert_eq!(
+        new_editor.platform_tag(),
+        Some("manylinux_2_28_x86_64"),
+        "Platform tag should be updated"
+    );
+
+    // Validate the wheel
+    validate_wheel_full(&edited_path).expect("Edited wheel should be valid");
+
+    println!("\n✅ Combined edits test passed!");
+}

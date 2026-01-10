@@ -19,6 +19,15 @@ pub enum WheelError {
 
     #[error("Record error: {0}")]
     Record(#[from] RecordError),
+
+    #[error("ELF error: {0}")]
+    Elf(#[from] ElfError),
+
+    #[error("WHEEL info error: {0}")]
+    WheelInfo(#[from] WheelInfoError),
+
+    #[error("Glob pattern error: {0}")]
+    GlobPattern(#[from] glob::PatternError),
 }
 
 /// Errors related to METADATA parsing
@@ -43,6 +52,35 @@ pub enum RecordError {
         expected: String,
         actual: String,
     },
+}
+
+/// Errors related to ELF file operations
+#[derive(Error, Debug)]
+pub enum ElfError {
+    #[error("Invalid ELF file: {0}")]
+    InvalidElf(String),
+
+    #[error("Unsupported architecture: {0}")]
+    UnsupportedArchitecture(String),
+
+    #[error("File not found in wheel: {0}")]
+    FileNotFound(String),
+
+    #[error("LIEF error: {0}")]
+    Lief(String),
+}
+
+/// Errors related to WHEEL file parsing
+#[derive(Error, Debug)]
+pub enum WheelInfoError {
+    #[error("Missing required field: {0}")]
+    MissingField(String),
+
+    #[error("Invalid tag format: {0}")]
+    InvalidTag(String),
+
+    #[error("Parse error: {0}")]
+    Parse(String),
 }
 
 /// Result of validating a wheel

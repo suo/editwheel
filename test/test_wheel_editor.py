@@ -656,3 +656,202 @@ class TestHashPreservation:
                                             assert (
                                                 row[1] == original_hashes[row[0]]
                                             ), f"Hash changed for {row[0]}"
+
+
+class TestPlatformTag:
+    """Tests for platform tag functionality."""
+
+    def test_get_platform_tag_pure_python(self):
+        """Test getting platform tag from a pure Python wheel."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+
+            # Pure Python wheel has "any" as platform
+            platform = editor.platform_tag
+            assert platform == "any"
+
+    def test_set_platform_tag(self):
+        """Test setting platform tag."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+
+            # Set a new platform tag
+            editor.platform_tag = "manylinux_2_28_x86_64"
+            assert editor.platform_tag == "manylinux_2_28_x86_64"
+
+            # Save and verify persistence
+            output_path = temp_path / "edited.whl"
+            editor.save(str(output_path))
+
+            new_editor = WheelEditor(str(output_path))
+            assert new_editor.platform_tag == "manylinux_2_28_x86_64"
+
+
+class TestRpathOperations:
+    """Tests for RPATH operations on ELF files."""
+
+    def test_set_rpath_no_so_files(self):
+        """Test set_rpath on a wheel with no .so files."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+
+            # This should return 0 (no files modified) since pure Python wheel has no .so files
+            count = editor.set_rpath("*.so", "$ORIGIN")
+            assert count == 0
+            assert not editor.has_modified_files()
+
+    def test_has_modified_files(self):
+        """Test has_modified_files() method."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+
+            # Initially no modified files
+            assert not editor.has_modified_files()
+
+            # After failed RPATH set (no matching files), still no modified files
+            editor.set_rpath("nonexistent/*.so", "$ORIGIN")
+            assert not editor.has_modified_files()
+
+
+class TestAddRequiresDist:
+    """Tests for add_requires_dist method."""
+
+    def test_add_requires_dist(self):
+        """Test adding a dependency using add_requires_dist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+
+            original_count = len(editor.requires_dist)
+
+            # Add a new dependency
+            editor.add_requires_dist("nccl-lib>=1.0")
+
+            assert len(editor.requires_dist) == original_count + 1
+            assert "nccl-lib>=1.0" in editor.requires_dist
+
+            # Save and verify persistence
+            output_path = temp_path / "edited.whl"
+            editor.save(str(output_path))
+
+            new_editor = WheelEditor(str(output_path))
+            assert "nccl-lib>=1.0" in new_editor.requires_dist
+
+
+class TestCLI:
+    """Tests for CLI commands."""
+
+    def test_cli_help(self):
+        """Test that CLI help works."""
+        from click.testing import CliRunner
+        from editwheel.cli import cli
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+
+        assert result.exit_code == 0
+        assert "wheel metadata editor" in result.output.lower()
+
+    def test_cli_show(self):
+        """Test CLI show command."""
+        from click.testing import CliRunner
+        from editwheel.cli import cli
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["show", str(test_wheel)])
+
+            assert result.exit_code == 0
+            assert "test-package" in result.output
+            assert "1.0.0" in result.output
+
+    def test_cli_edit_version(self):
+        """Test CLI edit command to change version."""
+        from click.testing import CliRunner
+        from editwheel.cli import cli
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+            output_path = temp_path / "edited.whl"
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["edit", str(test_wheel), "--version", "2.0.0", "-o", str(output_path)],
+            )
+
+            assert result.exit_code == 0
+
+            # Verify the change
+            editor = WheelEditor(str(output_path))
+            assert editor.version == "2.0.0"
+
+    def test_cli_edit_platform_tag(self):
+        """Test CLI edit command to change platform tag."""
+        from click.testing import CliRunner
+        from editwheel.cli import cli
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+            output_path = temp_path / "edited.whl"
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "edit",
+                    str(test_wheel),
+                    "--platform-tag",
+                    "manylinux_2_28_x86_64",
+                    "-o",
+                    str(output_path),
+                ],
+            )
+
+            assert result.exit_code == 0
+            assert "platform tag" in result.output.lower()
+
+            # Verify the change
+            editor = WheelEditor(str(output_path))
+            assert editor.platform_tag == "manylinux_2_28_x86_64"
+
+    def test_cli_show_json(self):
+        """Test CLI show command with JSON output."""
+        from click.testing import CliRunner
+        from editwheel.cli import cli
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["show", str(test_wheel), "--json"])
+
+            assert result.exit_code == 0
+
+            # Parse JSON output
+            import json
+
+            data = json.loads(result.output)
+            assert data["name"] == "test-package"
+            assert data["version"] == "1.0.0"
+            assert "platform_tag" in data

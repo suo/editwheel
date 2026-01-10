@@ -25,6 +25,9 @@ impl From<WheelError> for PyErr {
             WheelError::Metadata(_) => PyValueError::new_err(err.to_string()),
             WheelError::Record(_) => PyValueError::new_err(err.to_string()),
             WheelError::Zip(_) => PyIOError::new_err(err.to_string()),
+            WheelError::Elf(_) => PyValueError::new_err(err.to_string()),
+            WheelError::WheelInfo(_) => PyValueError::new_err(err.to_string()),
+            WheelError::GlobPattern(_) => PyValueError::new_err(err.to_string()),
         }
     }
 }
@@ -190,6 +193,76 @@ impl PyWheelEditor {
     #[setter]
     fn set_project_urls(&mut self, urls: Vec<String>) {
         self.inner.set_project_urls(urls);
+    }
+
+    /// Get the platform tag (e.g., "linux_x86_64" or "manylinux_2_28_x86_64")
+    #[getter]
+    fn platform_tag(&self) -> Option<String> {
+        self.inner.platform_tag().map(|s| s.to_string())
+    }
+
+    /// Set the platform tag for all tags in the wheel.
+    ///
+    /// This modifies the WHEEL file to change the platform (e.g., from
+    /// "linux_x86_64" to "manylinux_2_28_x86_64").
+    ///
+    /// Args:
+    ///     platform: The new platform tag (e.g., "manylinux_2_28_x86_64")
+    #[setter]
+    fn set_platform_tag(&mut self, platform: String) {
+        self.inner.set_platform_tag(&platform);
+    }
+
+    /// Get the RPATH of a specific file in the wheel.
+    ///
+    /// Returns the effective RPATH (prefers RUNPATH over RPATH).
+    ///
+    /// Args:
+    ///     path: Path to the file within the wheel (e.g., "torch/lib/libtorch.so")
+    ///
+    /// Returns:
+    ///     The RPATH string, or None if not set
+    ///
+    /// Raises:
+    ///     ValueError: If the file is not found or is not a valid ELF
+    fn get_rpath(&self, path: &str) -> PyResult<Option<String>> {
+        Ok(self.inner.get_rpath(path)?)
+    }
+
+    /// Set the RPATH for files matching a glob pattern.
+    ///
+    /// This modifies all ELF files in the wheel that match the given glob pattern.
+    /// Uses RUNPATH (preferred over RPATH) for setting the library search path.
+    ///
+    /// Args:
+    ///     pattern: Glob pattern to match files (e.g., "torch/lib/*.so")
+    ///     rpath: The new RPATH value (e.g., "$ORIGIN:$ORIGIN/../lib")
+    ///
+    /// Returns:
+    ///     Number of files modified
+    ///
+    /// Example:
+    ///     >>> editor.set_rpath("torch/lib/*.so", "$ORIGIN:$ORIGIN/../../nccl_lib/lib")
+    ///     15
+    fn set_rpath(&mut self, pattern: &str, rpath: &str) -> PyResult<usize> {
+        Ok(self.inner.set_rpath(pattern, rpath)?)
+    }
+
+    /// Add a dependency (Requires-Dist) to the wheel.
+    ///
+    /// This is a convenience method equivalent to appending to requires_dist.
+    ///
+    /// Args:
+    ///     dep: The dependency specification (e.g., "nccl-lib>=1.0")
+    fn add_requires_dist(&mut self, dep: &str) {
+        self.inner.add_requires_dist(dep);
+    }
+
+    /// Check if any files have been modified.
+    ///
+    /// Returns True if any ELF files have been modified (e.g., via set_rpath).
+    fn has_modified_files(&self) -> bool {
+        self.inner.has_modified_files()
     }
 
     /// Get a metadata value by key.

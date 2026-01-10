@@ -8,6 +8,7 @@ use zip::ZipArchive;
 use crate::error::WheelError;
 use crate::metadata::Metadata;
 use crate::record::Record;
+use crate::wheel_info::WheelInfo;
 
 /// Reader for Python wheel files
 pub struct WheelReader<R: Read + Seek> {
@@ -74,6 +75,12 @@ impl<R: Read + Seek> WheelReader<R> {
         let mut content = String::new();
         file.read_to_string(&mut content)?;
         Ok(content)
+    }
+
+    /// Read and parse the WHEEL file into WheelInfo
+    pub fn read_wheel_info(&mut self) -> Result<WheelInfo, WheelError> {
+        let content = self.read_wheel_file()?;
+        Ok(WheelInfo::parse(&content)?)
     }
 
     /// Get access to the underlying archive

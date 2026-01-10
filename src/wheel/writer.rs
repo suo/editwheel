@@ -11,11 +11,14 @@ use zip::ZipArchive;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
+use std::collections::HashMap;
+
 use crate::error::WheelError;
 use crate::metadata::Metadata;
 use crate::record::Record;
 use crate::record::RecordEntry;
 use crate::record::hash_content;
+use crate::wheel_info::WheelInfo;
 
 /// Write a modified wheel by copying files
 ///
@@ -105,6 +108,164 @@ pub fn write_modified<R: Read + Seek, W: Write + Seek>(
     ));
 
     // Phase 3: Write new RECORD (RECORD itself has no hash)
+    new_record_entries.push(RecordEntry::new(new_record_path.clone(), None, None));
+
+    let record = Record {
+        entries: new_record_entries,
+    };
+    let record_content = record.serialize();
+
+    writer.start_file(&new_record_path, options)?;
+    writer.write_all(record_content.as_bytes())?;
+
+    // Finalize the archive
+    writer.finish()?;
+
+    Ok(())
+}
+
+/// Write a modified wheel with additional modifications (ELF files, WHEEL file)
+///
+/// This is an extended version of `write_modified` that also handles:
+/// - Modified binary files (e.g., .so files with changed RPATH)
+/// - Modified WHEEL file (e.g., changed platform tags)
+///
+/// # Arguments
+/// * `source` - The source wheel archive
+/// * `output` - The output writer
+/// * `metadata` - The modified metadata to write
+/// * `original_record` - The original RECORD for hash preservation
+/// * `old_dist_info` - The old dist-info directory name
+/// * `new_dist_info` - The new dist-info directory name
+/// * `modified_files` - Map of file paths to their modified content
+/// * `wheel_info` - Optional modified WHEEL info (if None, uses original)
+pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
+    source: &mut ZipArchive<R>,
+    output: W,
+    metadata: &Metadata,
+    original_record: &Record,
+    old_dist_info: &str,
+    new_dist_info: &str,
+    modified_files: &HashMap<String, Vec<u8>>,
+    wheel_info: Option<&WheelInfo>,
+) -> Result<(), WheelError> {
+    let mut writer = ZipWriter::new(output);
+    let mut new_record_entries: Vec<RecordEntry> = Vec::new();
+
+    let old_metadata_path = format!("{}/METADATA", old_dist_info);
+    let old_record_path = format!("{}/RECORD", old_dist_info);
+    let old_wheel_path = format!("{}/WHEEL", old_dist_info);
+    let new_metadata_path = format!("{}/METADATA", new_dist_info);
+    let new_record_path = format!("{}/RECORD", new_dist_info);
+    let new_wheel_path = format!("{}/WHEEL", new_dist_info);
+
+    let needs_rename = old_dist_info != new_dist_info;
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    // Phase 1: Copy all files, handling modifications
+    for i in 0..source.len() {
+        let entry = source.by_index_raw(i)?;
+        let name = entry.name().to_string();
+
+        // Skip files we'll write new versions of
+        if name == old_metadata_path || name == old_record_path {
+            continue;
+        }
+
+        // Skip WHEEL file if we have a modified version
+        if wheel_info.is_some() && name == old_wheel_path {
+            continue;
+        }
+
+        // Determine the new path (handle dist-info rename for version changes)
+        let new_name = if needs_rename && name.starts_with(old_dist_info) {
+            name.replacen(old_dist_info, new_dist_info, 1)
+        } else {
+            name.clone()
+        };
+
+        // Check if this file has been modified
+        if let Some(modified_content) = modified_files.get(&name) {
+            // Write the modified content
+            drop(entry); // Release the raw entry
+            writer.start_file(&new_name, options)?;
+            writer.write_all(modified_content)?;
+
+            // Compute new hash for modified content
+            let hash = hash_content(modified_content);
+            new_record_entries.push(RecordEntry::new(
+                new_name,
+                Some(hash),
+                Some(modified_content.len() as u64),
+            ));
+        } else {
+            // Preserve original hash from RECORD if available
+            if let Some(record_entry) = original_record.find(&name) {
+                // Use raw copy - copies compressed bytes directly without decompression
+                if new_name != name {
+                    writer.raw_copy_file_rename(entry, &new_name)?;
+                } else {
+                    writer.raw_copy_file(entry)?;
+                }
+
+                new_record_entries.push(RecordEntry::new(
+                    new_name,
+                    record_entry.hash.clone(),
+                    record_entry.size,
+                ));
+            } else {
+                // File not in RECORD - need to compute hash (rare case)
+                // First drop the raw entry, then read the decompressed content
+                drop(entry);
+                let mut decompressed = source.by_index(i)?;
+                let mut content = Vec::new();
+                std::io::copy(&mut decompressed, &mut content)?;
+                let hash = hash_content(&content);
+
+                // Write the content normally
+                writer.start_file(&new_name, options)?;
+                writer.write_all(&content)?;
+
+                new_record_entries.push(RecordEntry::new(
+                    new_name,
+                    Some(hash),
+                    Some(content.len() as u64),
+                ));
+            }
+        }
+    }
+
+    // Phase 2: Write new WHEEL file if modified
+    if let Some(wheel_info) = wheel_info {
+        let wheel_bytes = wheel_info.serialize().into_bytes();
+        let wheel_hash = hash_content(&wheel_bytes);
+        let wheel_size = wheel_bytes.len() as u64;
+
+        writer.start_file(&new_wheel_path, options)?;
+        writer.write_all(&wheel_bytes)?;
+
+        new_record_entries.push(RecordEntry::new(
+            new_wheel_path,
+            Some(wheel_hash),
+            Some(wheel_size),
+        ));
+    }
+
+    // Phase 3: Write new METADATA
+    let metadata_bytes = metadata.serialize().into_bytes();
+    let metadata_hash = hash_content(&metadata_bytes);
+    let metadata_size = metadata_bytes.len() as u64;
+
+    writer.start_file(&new_metadata_path, options)?;
+    writer.write_all(&metadata_bytes)?;
+
+    new_record_entries.push(RecordEntry::new(
+        new_metadata_path,
+        Some(metadata_hash),
+        Some(metadata_size),
+    ));
+
+    // Phase 4: Write new RECORD (RECORD itself has no hash)
     new_record_entries.push(RecordEntry::new(new_record_path.clone(), None, None));
 
     let record = Record {

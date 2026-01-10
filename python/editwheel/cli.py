@@ -19,7 +19,7 @@ from editwheel.editwheel import WheelEditor
 
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="editwheel")
+@click.version_option(version="0.2.0", prog_name="editwheel")
 def cli() -> None:
     """High-performance Python wheel metadata editor.
 
@@ -70,6 +70,7 @@ def show(wheel: str, as_json: bool, field: Tuple[str, ...]) -> None:
         "classifiers": editor.classifiers,
         "requires_dist": editor.requires_dist,
         "project_urls": editor.project_urls,
+        "platform_tag": editor.platform_tag,
     }
 
     # Filter to specific fields if requested
@@ -127,6 +128,17 @@ def show(wheel: str, as_json: bool, field: Tuple[str, ...]) -> None:
     "--set-requires-dist",
     help="Replace all dependencies (comma-separated)",
 )
+@click.option(
+    "--set-rpath",
+    nargs=2,
+    multiple=True,
+    metavar="PATTERN RPATH",
+    help="Set RPATH for ELF files matching PATTERN. Can be repeated. Example: --set-rpath 'torch/lib/*.so' '$ORIGIN'",
+)
+@click.option(
+    "--platform-tag",
+    help="Set platform tag for the wheel (e.g., 'manylinux_2_28_x86_64')",
+)
 def edit(
     wheel: str,
     output: Optional[str],
@@ -141,6 +153,8 @@ def edit(
     set_classifiers: Optional[str],
     add_requires_dist: Tuple[str, ...],
     set_requires_dist: Optional[str],
+    set_rpath: Tuple[Tuple[str, str], ...],
+    platform_tag: Optional[str],
 ) -> None:
     """Edit wheel metadata fields and save.
 
@@ -153,6 +167,10 @@ def edit(
         editwheel edit mypackage.whl --author "New Author" -o modified.whl
 
         editwheel edit mypackage.whl --add-requires-dist "click>=8.0"
+
+        editwheel edit torch.whl --set-rpath 'torch/lib/*.so' '$ORIGIN'
+
+        editwheel edit torch.whl --platform-tag manylinux_2_28_x86_64
     """
     try:
         editor = WheelEditor(wheel)
@@ -209,6 +227,24 @@ def edit(
         deps = list(editor.requires_dist)
         deps.extend(add_requires_dist)
         editor.requires_dist = deps
+        changes_made = True
+
+    # Handle RPATH modifications
+    if set_rpath:
+        for pattern, rpath in set_rpath:
+            try:
+                count = editor.set_rpath(pattern, rpath)
+                click.echo(f"Set RPATH on {count} file(s) matching '{pattern}'")
+                if count > 0:
+                    changes_made = True
+            except Exception as e:
+                click.echo(f"Error setting RPATH for '{pattern}': {e}", err=True)
+                sys.exit(1)
+
+    # Handle platform tag
+    if platform_tag is not None:
+        editor.platform_tag = platform_tag
+        click.echo(f"Set platform tag to: {platform_tag}")
         changes_made = True
 
     if not changes_made:

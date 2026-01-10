@@ -4,14 +4,18 @@ High-performance Python wheel metadata editor written in Rust.
 
 ## Overview
 
-`editwheel` provides fast editing of Python wheel metadata by copying unchanged files as raw compressed bytes, only modifying the `METADATA` and `RECORD` files.
+`editwheel` provides fast editing of Python wheel metadata and ELF binaries by copying unchanged files as raw compressed bytes, only modifying the files that need to change.
 
-This makes it ideal for scenarios where you need to quickly modify wheel metadata (e.g., version bumping) without the overhead of fully extracting and repacking large wheels.
+This makes it ideal for scenarios where you need to quickly modify wheel metadata (e.g., version bumping), change platform tags, or patch RPATH in native extensions without the overhead of fully extracting and repacking large wheels.
 
 ## Features
 
+- **Metadata editing**: Modify package name, version, dependencies, and other metadata fields
+- **ELF patching**: Set RPATH/RUNPATH on `.so` files (similar to `patchelf`)
+- **Platform tag modification**: Change wheel platform tags (e.g., `linux_x86_64` → `manylinux_2_28_x86_64`)
 - **Python bindings**: Use from Python via PyO3
 - **Rust library**: Use directly from Rust
+- **CLI tool**: Command-line interface for quick edits
 - **Full wheel validation**: Verify file hashes against RECORD
 - **pip compatible**: Output wheels are fully compatible with pip and other Python tooling
 
@@ -74,6 +78,35 @@ editor.save()
 | `classifiers` | `list[str]` | Trove classifiers |
 | `requires_dist` | `list[str]` | Dependencies |
 | `project_urls` | `list[str]` | Project URLs |
+| `platform_tag` | `str` | Platform tag from WHEEL file |
+
+#### ELF patching (native wheels)
+
+```python
+from editwheel import WheelEditor
+
+editor = WheelEditor("torch-2.0.0-cp311-cp311-linux_x86_64.whl")
+
+# Set RPATH on all .so files matching a glob pattern
+count = editor.set_rpath("torch/lib/*.so", "$ORIGIN:$ORIGIN/../lib")
+print(f"Modified {count} files")
+
+# Get RPATH of a specific file
+rpath = editor.get_rpath("torch/lib/libtorch.so")
+
+# Change platform tag (e.g., for manylinux compliance)
+editor.platform_tag = "manylinux_2_28_x86_64"
+
+# Add a dependency
+editor.add_requires_dist("nccl-lib>=1.0")
+
+# Check if any ELF files were modified
+if editor.has_modified_files():
+    print("ELF files were patched")
+
+# Save the modified wheel
+editor.save("torch-2.0.0-cp311-cp311-manylinux_2_28_x86_64.whl")
+```
 
 #### Generic metadata access
 
@@ -106,6 +139,19 @@ editwheel edit mypackage.whl --author "New Author" -o modified.whl
 
 # Add dependencies
 editwheel edit mypackage.whl --add-requires-dist "click>=8.0"
+
+# Set RPATH on native extensions
+editwheel edit torch.whl --set-rpath 'torch/lib/*.so' '$ORIGIN:$ORIGIN/../lib'
+
+# Change platform tag
+editwheel edit torch.whl --platform-tag manylinux_2_28_x86_64
+
+# Combined operations
+editwheel edit torch.whl \
+  --set-rpath 'torch/lib/*.so' '$ORIGIN' \
+  --platform-tag manylinux_2_28_x86_64 \
+  --add-requires-dist 'nccl-lib>=1.0' \
+  -o modified_torch.whl
 ```
 
 #### Available edit options
@@ -124,6 +170,8 @@ editwheel edit mypackage.whl --add-requires-dist "click>=8.0"
 | `--set-classifiers` | Replace all classifiers (comma-separated) |
 | `--add-requires-dist` | Add a dependency (repeatable) |
 | `--set-requires-dist` | Replace all dependencies (comma-separated) |
+| `--set-rpath PATTERN RPATH` | Set RPATH for ELF files matching pattern (repeatable) |
+| `--platform-tag` | Set platform tag in WHEEL file |
 
 ### Rust
 
@@ -202,10 +250,10 @@ For large wheels (e.g., PyTorch at ~1GB), this is slow and memory-intensive.
 `editwheel` instead:
 1. Opens the wheel as a ZIP archive
 2. Copies unchanged files using raw compressed bytes (no decompression/recompression)
-3. Only regenerates `METADATA` and `RECORD` files
+3. Only regenerates files that need to change (`METADATA`, `WHEEL`, `RECORD`, and any patched ELF files)
 4. Updates file hashes in `RECORD` for modified files
 
-This results in constant-time performance regardless of wheel size.
+This results in near-constant-time performance regardless of wheel size. For ELF patching operations, only the affected `.so` files are decompressed, modified, and recompressed.
 
 ## License
 
