@@ -22,7 +22,7 @@ This makes it ideal for scenarios where you need to quickly modify wheel metadat
 
 ```bash
 # Build and install using maturin
-with-proxy uv sync
+uv sync
 ```
 
 ### Rust
@@ -87,6 +87,45 @@ editor.set_metadata("License", "MIT")
 editor.set_metadata("Classifier", ["Development Status :: 4 - Beta", "License :: OSI Approved :: MIT License"])
 ```
 
+### CLI
+
+```bash
+# Show wheel metadata
+editwheel show mypackage-1.0.0-py3-none-any.whl
+
+# Show as JSON
+editwheel show mypackage.whl --json
+
+# Show specific fields
+editwheel show mypackage.whl -f name -f version
+
+# Edit version
+editwheel edit mypackage.whl --version 1.0.1
+
+# Edit and save to new file
+editwheel edit mypackage.whl --author "New Author" -o modified.whl
+
+# Add dependencies
+editwheel edit mypackage.whl --add-requires-dist "click>=8.0"
+```
+
+#### Available edit options
+
+| Option | Description |
+|--------|-------------|
+| `--output`, `-o` | Output path (default: overwrite in-place) |
+| `--name` | Set package name |
+| `--version` | Set version |
+| `--summary` | Set summary/description |
+| `--author` | Set author name |
+| `--author-email` | Set author email |
+| `--license` | Set license |
+| `--requires-python` | Set Python version requirement |
+| `--add-classifier` | Add a classifier (repeatable) |
+| `--set-classifiers` | Replace all classifiers (comma-separated) |
+| `--add-requires-dist` | Add a dependency (repeatable) |
+| `--set-requires-dist` | Replace all dependencies (comma-separated) |
+
 ### Rust
 
 ```rust
@@ -127,20 +166,20 @@ fn main() -> Result<(), editwheel::WheelError> {
 
 ```bash
 # Build Rust library
-with-proxy cargo build --release
+cargo build --release
 
 # Build Python wheel
-with-proxy uv sync
+uv sync
 ```
 
 ### Testing
 
 ```bash
 # Run Rust tests
-with-proxy cargo test
+cargo test
 
 # Run integration tests (downloads wheels from PyPI)
-with-proxy cargo test --release --test integration_test -- --nocapture
+cargo test --release --test integration_test -- --nocapture
 
 # Run Python tests
 .venv/bin/pytest
@@ -149,7 +188,7 @@ with-proxy cargo test --release --test integration_test -- --nocapture
 ### Benchmarking
 
 ```bash
-with-proxy cargo run --release --example bench_edit
+cargo run --release --example bench_edit
 ```
 
 ## How it works
