@@ -19,7 +19,7 @@ from editwheel.editwheel import WheelEditor
 
 
 @click.group()
-@click.version_option(version="0.2.1", prog_name="editwheel")
+@click.version_option(version="0.2.2", prog_name="editwheel")
 def cli() -> None:
     """High-performance Python wheel metadata editor.
 
