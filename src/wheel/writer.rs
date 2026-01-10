@@ -188,7 +188,13 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
         if let Some(modified_content) = modified_files.get(&name) {
             // Write the modified content
             drop(entry); // Release the raw entry
-            writer.start_file(&new_name, options)?;
+            // Enable ZIP64 for large files (>4GB)
+            let file_options = if modified_content.len() as u64 > 0xFFFFFFFF {
+                options.large_file(true)
+            } else {
+                options
+            };
+            writer.start_file(&new_name, file_options)?;
             writer.write_all(modified_content)?;
 
             // Compute new hash for modified content
@@ -222,8 +228,13 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
                 std::io::copy(&mut decompressed, &mut content)?;
                 let hash = hash_content(&content);
 
-                // Write the content normally
-                writer.start_file(&new_name, options)?;
+                // Write the content normally, enabling ZIP64 for large files
+                let file_options = if content.len() as u64 > 0xFFFFFFFF {
+                    options.large_file(true)
+                } else {
+                    options
+                };
+                writer.start_file(&new_name, file_options)?;
                 writer.write_all(&content)?;
 
                 new_record_entries.push(RecordEntry::new(
