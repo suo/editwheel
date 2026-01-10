@@ -13,28 +13,16 @@ This makes it ideal for scenarios where you need to quickly modify wheel metadat
 - **Metadata editing**: Modify package name, version, dependencies, and other metadata fields
 - **ELF patching**: Set RPATH/RUNPATH on `.so` files (similar to `patchelf`)
 - **Platform tag modification**: Change wheel platform tags (e.g., `linux_x86_64` → `manylinux_2_28_x86_64`)
-- **Python bindings**: Use from Python via PyO3
-- **Rust library**: Use directly from Rust
+- **Python and Rust bindings**: Use programmatically in your release pipeline.
 - **CLI tool**: Command-line interface for quick edits
 - **Full wheel validation**: Verify file hashes against RECORD
 - **pip compatible**: Output wheels are fully compatible with pip and other Python tooling
 
 ## Installation
 
-### Python
-
-```bash
-# Build and install using maturin
-uv sync
+Install using `uv`:
 ```
-
-### Rust
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-editwheel = { path = "path/to/editwheel" }
+uv tool install editwheel
 ```
 
 ## Usage
@@ -229,7 +217,7 @@ cargo test
 cargo test --release --test integration_test -- --nocapture
 
 # Run Python tests
-.venv/bin/pytest
+uv run pytest
 ```
 
 ### Benchmarking
