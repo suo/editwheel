@@ -4,6 +4,7 @@ use pyo3::exceptions::PyFileNotFoundError;
 use pyo3::exceptions::PyIOError;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyAny;
 use pyo3::types::PyList;
 
 use crate::WheelEditor;
@@ -273,7 +274,7 @@ impl PyWheelEditor {
     /// Returns:
     ///     The value as a string for single-value fields, or a list of strings
     ///     for multi-value fields. Returns None if the field is not set.
-    fn get_metadata(&self, py: Python<'_>, key: &str) -> PyResult<PyObject> {
+    fn get_metadata(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
         let metadata = self.inner.metadata();
 
         // Multi-value fields return lists
@@ -337,7 +338,7 @@ impl PyWheelEditor {
     ///     key: The metadata field name (e.g., "Author", "License")
     ///     value: The value to set (string for single-value fields,
     ///            list of strings for multi-value fields)
-    fn set_metadata(&mut self, py: Python<'_>, key: &str, value: PyObject) -> PyResult<()> {
+    fn set_metadata(&mut self, py: Python<'_>, key: &str, value: Py<PyAny>) -> PyResult<()> {
         let metadata = self.inner.metadata_mut();
 
         // Check if it's a list (multi-value field)
