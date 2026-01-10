@@ -16,6 +16,7 @@ import csv
 import hashlib
 import io
 import subprocess
+import sys
 import tempfile
 import urllib.request
 import zipfile
@@ -238,7 +239,7 @@ class TestRealWheels:
         # Test pip install (dry run)
         result = subprocess.run(
             [
-                "python",
+                sys.executable,
                 "-m",
                 "pip",
                 "install",
