@@ -98,6 +98,9 @@ def download_torch_wheel(dest_dir: Path) -> Path:
 @pytest.fixture(scope="module")
 def torch_wheel(tmp_path_factory) -> Path:
     """Fixture that downloads a torch wheel once per test module."""
+    import sys
+    if sys.platform == "darwin":
+        pytest.skip("CUDA torch wheels are not available on macOS")
     download_dir = tmp_path_factory.mktemp("wheels")
     wheel_path = download_torch_wheel(download_dir)
     print(f"\nDownloaded wheel: {wheel_path}")
