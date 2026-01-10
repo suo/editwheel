@@ -10,7 +10,7 @@ name = "editwheel"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-zip = { git = "ssh://git@github.com/suo/zip2.git" }
+zip = { git = "https://github.com/suo/zip2.git" }
 thiserror = "2.0"            # Error derive macros
 sha2 = "0.10"                # SHA256 hashing
 base64 = "0.22"              # Hash encoding
