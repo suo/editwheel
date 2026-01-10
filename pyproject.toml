@@ -6,6 +6,7 @@ build-backend = "maturin"
 name = "editwheel"
 version = "0.2.0"
 description = "High-performance Python wheel metadata editor"
+readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 classifiers = [
