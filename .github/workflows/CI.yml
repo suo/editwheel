@@ -30,12 +30,6 @@ jobs:
             target: x86
           - runner: ubuntu-22.04
             target: aarch64
-          - runner: ubuntu-22.04
-            target: armv7
-          - runner: ubuntu-22.04
-            target: s390x
-          - runner: ubuntu-22.04
-            target: ppc64le
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -67,7 +61,7 @@ jobs:
           pip install pytest
           pytest
       - name: pytest
-        if: ${{ !startsWith(matrix.platform.target, 'x86') && matrix.platform.target != 'ppc64' }}
+        if: ${{ matrix.platform.target == 'aarch64' }}
         uses: uraimo/run-on-arch-action@v2
         with:
           arch: ${{ matrix.platform.target }}
