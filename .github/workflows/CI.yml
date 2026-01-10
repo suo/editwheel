@@ -128,7 +128,7 @@ jobs:
             source $HOME/.local/bin/env
             python3 -m virtualenv .venv
             source .venv/bin/activate
-            pip install editwheel --no-index --find-links dist --force-reinstall
+            pip install editwheel --find-links dist --force-reinstall
             pip install pytest
             pytest
       - name: pytest
