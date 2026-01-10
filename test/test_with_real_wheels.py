@@ -8,7 +8,7 @@ This script downloads real wheels and tests that the Rust-based editor can modif
 while maintaining full compatibility with all Python tooling.
 
 Usage:
-    with-proxy uv run pytest test/test_with_real_wheels.py -v
+    uv run pytest test/test_with_real_wheels.py -v
 """
 
 import base64

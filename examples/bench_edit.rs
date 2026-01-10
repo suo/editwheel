@@ -1,7 +1,7 @@
 //! Benchmark script for editwheel-rs wheel editing
 //!
 //! Run with:
-//!   with-proxy cargo run --release --example bench_edit
+//!   cargo run --release --example bench_edit
 
 use std::path::Path;
 use std::process::Command;

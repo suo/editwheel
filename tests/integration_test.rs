@@ -4,7 +4,7 @@
 //! while maintaining full compatibility with Python tooling.
 //!
 //! Run with:
-//!   with-proxy cargo test --release --test integration_test -- --nocapture
+//!   cargo test --release --test integration_test -- --nocapture
 
 use std::collections::HashSet;
 use std::fs::File;

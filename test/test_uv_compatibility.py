@@ -5,13 +5,13 @@
 Test uv pip install compatibility for edited wheels.
 
 This script downloads a torch wheel from PyPI, edits the version, and verifies
-that the edited wheel can be installed with `with-proxy uv pip install`.
+that the edited wheel can be installed with `uv pip install`.
 
 Usage:
-    with-proxy uv run pytest test/test_uv_compatibility.py -v
+    uv run pytest test/test_uv_compatibility.py -v
 
     # Or run directly as a script:
-    with-proxy uv run python test/test_uv_compatibility.py [wheel_path]
+    uv run python test/test_uv_compatibility.py [wheel_path]
 
 Known Issue:
     Large wheels (>4GB) using zip64 format may fail with uv due to incorrect
@@ -61,8 +61,7 @@ def download_torch_wheel(dest_dir: Path) -> Path:
     # We download for the current platform since cross-platform download is tricky
     result = subprocess.run(
         [
-            "with-proxy",
-            "uv",
+                        "uv",
             "run",
             "--with",
             "pip",
@@ -132,14 +131,14 @@ def test_uv_install_edited_wheel(tmp_path: Path, torch_wheel: Path) -> None:
     test_project = tmp_path / "test_project"
     test_project.mkdir()
     subprocess.run(
-        ["with-proxy", "uv", "init", "--python", TEST_PYTHON_VERSION],
+        ["uv", "init", "--python", TEST_PYTHON_VERSION],
         cwd=test_project,
         capture_output=True,
         check=True,
     )
     # Create the venv to ensure uv pip uses the correct Python
     subprocess.run(
-        ["with-proxy", "uv", "sync"],
+        ["uv", "sync"],
         cwd=test_project,
         capture_output=True,
         check=True,
@@ -148,8 +147,7 @@ def test_uv_install_edited_wheel(tmp_path: Path, torch_wheel: Path) -> None:
     # Test uv pip install (dry-run to avoid actually installing the large wheel)
     result = subprocess.run(
         [
-            "with-proxy",
-            "uv",
+                        "uv",
             "pip",
             "install",
             "--dry-run",
@@ -190,14 +188,14 @@ def test_pip_vs_uv_comparison(tmp_path: Path, torch_wheel: Path) -> None:
     test_project = tmp_path / "test_project"
     test_project.mkdir()
     subprocess.run(
-        ["with-proxy", "uv", "init", "--python", TEST_PYTHON_VERSION],
+        ["uv", "init", "--python", TEST_PYTHON_VERSION],
         cwd=test_project,
         capture_output=True,
         check=True,
     )
     # Create the venv to ensure uv pip uses the correct Python
     subprocess.run(
-        ["with-proxy", "uv", "sync"],
+        ["uv", "sync"],
         cwd=test_project,
         capture_output=True,
         check=True,
@@ -205,15 +203,14 @@ def test_pip_vs_uv_comparison(tmp_path: Path, torch_wheel: Path) -> None:
 
     # Test with pip (install pip first, then use uv run pip)
     subprocess.run(
-        ["with-proxy", "uv", "add", "pip", "--dev"],
+        ["uv", "add", "pip", "--dev"],
         cwd=test_project,
         capture_output=True,
         check=True,
     )
     pip_result = subprocess.run(
         [
-            "with-proxy",
-            "uv",
+                        "uv",
             "run",
             "pip",
             "install",
@@ -230,8 +227,7 @@ def test_pip_vs_uv_comparison(tmp_path: Path, torch_wheel: Path) -> None:
     # Test with uv
     uv_result = subprocess.run(
         [
-            "with-proxy",
-            "uv",
+                        "uv",
             "pip",
             "install",
             "--dry-run",
@@ -307,14 +303,14 @@ def _run_test_with_wheel(wheel_path: Path) -> None:
 
         print(f"\n=== Creating test environment with Python {TEST_PYTHON_VERSION} ===")
         subprocess.run(
-            ["with-proxy", "uv", "init", "--python", TEST_PYTHON_VERSION],
+            ["uv", "init", "--python", TEST_PYTHON_VERSION],
             cwd=test_project,
             capture_output=True,
             check=True,
         )
         # Create the venv to ensure uv pip uses it
         subprocess.run(
-            ["with-proxy", "uv", "sync"],
+            ["uv", "sync"],
             cwd=test_project,
             capture_output=True,
             check=True,
@@ -325,8 +321,7 @@ def _run_test_with_wheel(wheel_path: Path) -> None:
         print(f"\n=== Testing with uv pip install (Python {TEST_PYTHON_VERSION}) ===")
         uv_result = subprocess.run(
             [
-                "with-proxy",
-                "uv",
+                                "uv",
                 "pip",
                 "install",
                 "--dry-run",
