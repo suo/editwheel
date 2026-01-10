@@ -61,8 +61,9 @@ def download_torch_wheel(dest_dir: Path) -> Path:
     # We download for the current platform since cross-platform download is tricky
     result = subprocess.run(
         [
-                        "uv",
+            "uv",
             "run",
+            "--no-project",
             "--with",
             "pip",
             "pip",
@@ -147,7 +148,7 @@ def test_uv_install_edited_wheel(tmp_path: Path, torch_wheel: Path) -> None:
     # Test uv pip install (dry-run to avoid actually installing the large wheel)
     result = subprocess.run(
         [
-                        "uv",
+            "uv",
             "pip",
             "install",
             "--dry-run",
@@ -210,7 +211,7 @@ def test_pip_vs_uv_comparison(tmp_path: Path, torch_wheel: Path) -> None:
     )
     pip_result = subprocess.run(
         [
-                        "uv",
+            "uv",
             "run",
             "pip",
             "install",
@@ -227,7 +228,7 @@ def test_pip_vs_uv_comparison(tmp_path: Path, torch_wheel: Path) -> None:
     # Test with uv
     uv_result = subprocess.run(
         [
-                        "uv",
+            "uv",
             "pip",
             "install",
             "--dry-run",
@@ -321,7 +322,7 @@ def _run_test_with_wheel(wheel_path: Path) -> None:
         print(f"\n=== Testing with uv pip install (Python {TEST_PYTHON_VERSION}) ===")
         uv_result = subprocess.run(
             [
-                                "uv",
+                "uv",
                 "pip",
                 "install",
                 "--dry-run",
