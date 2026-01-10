@@ -53,6 +53,9 @@ jobs:
         with:
           name: wheels-linux-${{ matrix.platform.target }}
           path: dist
+      - name: Install uv
+        if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
+        uses: astral-sh/setup-uv@v7
       - name: pytest
         if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
         shell: bash
@@ -109,6 +112,9 @@ jobs:
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
           path: dist
+      - name: Install uv
+        if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
+        uses: astral-sh/setup-uv@v7
       - name: pytest
         if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
         uses: addnab/docker-run-action@v3
@@ -117,7 +123,9 @@ jobs:
           options: -v ${{ github.workspace }}:/io -w /io
           run: |
             set -e
-            apk add py3-pip py3-virtualenv
+            apk add py3-pip py3-virtualenv curl
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            source $HOME/.local/bin/env
             python3 -m virtualenv .venv
             source .venv/bin/activate
             pip install editwheel --no-index --find-links dist --force-reinstall
@@ -171,6 +179,8 @@ jobs:
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: dist
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
       - name: pytest
         shell: bash
         run: |
@@ -206,6 +216,8 @@ jobs:
         with:
           name: wheels-macos-${{ matrix.platform.target }}
           path: dist
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
       - name: pytest
         run: |
           set -e
