@@ -4,13 +4,12 @@ High-performance Python wheel metadata editor written in Rust.
 
 ## Overview
 
-`editwheel` provides constant-time editing of Python wheel metadata, regardless of wheel size. It achieves this by copying unchanged files as raw compressed bytes, only modifying the `METADATA` and `RECORD` files.
+`editwheel` provides fast editing of Python wheel metadata by copying unchanged files as raw compressed bytes, only modifying the `METADATA` and `RECORD` files.
 
 This makes it ideal for scenarios where you need to quickly modify wheel metadata (e.g., version bumping) without the overhead of fully extracting and repacking large wheels.
 
 ## Features
 
-- **Constant-time performance**: Edit metadata in O(1) time regardless of wheel size
 - **Python bindings**: Use from Python via PyO3
 - **Rust library**: Use directly from Rust
 - **Full wheel validation**: Verify file hashes against RECORD
