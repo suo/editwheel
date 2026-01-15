@@ -6,6 +6,7 @@
 
 use std::ffi::CString;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 use elb::DynamicTag;
 use elb::Elf;
@@ -19,8 +20,27 @@ use super::types::ElfModification;
 // Counter for generating unique temp file names
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// System page size (used by elb for ELF parsing)
-const PAGE_SIZE: u64 = 4096;
+/// System page size, detected at runtime.
+/// Falls back to 4096 if detection fails.
+static PAGE_SIZE: OnceLock<u64> = OnceLock::new();
+
+/// Get the system page size.
+/// On Linux/Unix, this uses sysconf(_SC_PAGESIZE).
+/// This is important for arm64 systems like GB200 which use 64KB pages.
+fn get_page_size() -> u64 {
+    *PAGE_SIZE.get_or_init(|| {
+        #[cfg(unix)]
+        {
+            // SAFETY: sysconf is safe to call with _SC_PAGESIZE
+            let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+            if page_size > 0 {
+                return page_size as u64;
+            }
+        }
+        // Fallback to 4KB
+        4096
+    })
+}
 
 /// Generate a unique temp file path
 fn temp_elf_path() -> std::path::PathBuf {
@@ -49,7 +69,7 @@ fn parse_elf_from_path(path: &std::path::Path) -> Result<ElfInfo, ElfError> {
     let mut file = std::fs::File::open(path)
         .map_err(|e| ElfError::Lief(format!("Failed to open file: {}", e)))?;
 
-    let elf = Elf::read(&mut file, PAGE_SIZE)
+    let elf = Elf::read(&mut file, get_page_size())
         .map_err(|e| ElfError::InvalidElf(format!("Failed to parse ELF: {}", e)))?;
 
     let mut info = ElfInfo::default();
@@ -113,7 +133,7 @@ pub fn modify_elf(data: &[u8], modifications: &[ElfModification]) -> Result<Vec<
         })?;
 
     // Parse and create patcher
-    let elf = Elf::read(&mut file, PAGE_SIZE).map_err(|e| {
+    let elf = Elf::read(&mut file, get_page_size()).map_err(|e| {
         let _ = std::fs::remove_file(&temp_path);
         ElfError::InvalidElf(format!("Failed to parse ELF: {}", e))
     })?;

@@ -19,6 +19,7 @@ rayon = "1.10"               # Parallel processing
 pyo3 = { version = "0.26", features = ["extension-module"], optional = true }
 elb = "0.4"                  # ELF patching (RPATH, RUNPATH, interpreter)
 glob = "0.3"                 # Glob pattern matching for file paths
+libc = "0.2"                 # System page size detection for arm64 compatibility
 
 [dev-dependencies]
 tempfile = "3"
