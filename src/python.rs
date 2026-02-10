@@ -196,10 +196,49 @@ impl PyWheelEditor {
         self.inner.set_project_urls(urls);
     }
 
+    /// Get the python tag (e.g., "cp312" or "py3")
+    #[getter]
+    fn python_tag(&self) -> Option<String> {
+        self.inner.python_tag().map(|s| s.to_string())
+    }
+
+    /// Set the python tag for all tags in the wheel.
+    ///
+    /// Args:
+    ///     python: The new python tag (e.g., "cp312")
+    #[setter]
+    fn set_python_tag(&mut self, python: String) {
+        self.inner.set_python_tag(&python);
+    }
+
+    /// Get the ABI tag (e.g., "cp312" or "none")
+    #[getter]
+    fn abi_tag(&self) -> Option<String> {
+        self.inner.abi_tag().map(|s| s.to_string())
+    }
+
+    /// Set the ABI tag for all tags in the wheel.
+    ///
+    /// Args:
+    ///     abi: The new ABI tag (e.g., "cp312")
+    #[setter]
+    fn set_abi_tag(&mut self, abi: String) {
+        self.inner.set_abi_tag(&abi);
+    }
+
     /// Get the platform tag (e.g., "linux_x86_64" or "manylinux_2_28_x86_64")
     #[getter]
     fn platform_tag(&self) -> Option<String> {
         self.inner.platform_tag().map(|s| s.to_string())
+    }
+
+    /// Compute the PEP 427 wheel filename from current metadata and tags.
+    ///
+    /// Returns:
+    ///     The filename string (e.g., "package-1.0.0-cp312-cp312-linux_x86_64.whl")
+    #[getter]
+    fn filename(&self) -> String {
+        self.inner.filename()
     }
 
     /// Set the platform tag for all tags in the wheel.

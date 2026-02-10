@@ -31,6 +31,7 @@ pub mod wheel_info;
 mod python;
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
@@ -58,6 +59,18 @@ pub use wheel::write_modified;
 pub use wheel::write_modified_extended;
 pub use wheel_info::WheelInfo;
 pub use wheel_info::WheelTag;
+
+/// Dot-join unique values from an iterator, preserving first-occurrence order.
+fn dedup_join<'a>(iter: impl Iterator<Item = &'a str>) -> String {
+    let mut seen = HashSet::new();
+    let mut parts = Vec::new();
+    for val in iter {
+        if seen.insert(val) {
+            parts.push(val);
+        }
+    }
+    parts.join(".")
+}
 
 /// High-level API for editing Python wheel files
 ///
@@ -102,6 +115,24 @@ impl WheelEditor {
     /// Get the path to the wheel file
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Compute the PEP 427 wheel filename from current metadata and tags.
+    ///
+    /// Format: `{name}-{version}(-{build})?-{python}-{abi}-{platform}.whl`
+    /// where each tag component is dot-joined across unique values.
+    pub fn filename(&self) -> String {
+        let name = normalize_dist_info_name(&self.metadata.name);
+        let version = &self.metadata.version;
+
+        let python = dedup_join(self.wheel_info.tags.iter().map(|t| t.python.as_str()));
+        let abi = dedup_join(self.wheel_info.tags.iter().map(|t| t.abi.as_str()));
+        let platform = dedup_join(self.wheel_info.tags.iter().map(|t| t.platform.as_str()));
+
+        match &self.wheel_info.build {
+            Some(build) => format!("{name}-{version}-{build}-{python}-{abi}-{platform}.whl"),
+            None => format!("{name}-{version}-{python}-{abi}-{platform}.whl"),
+        }
     }
 
     /// Get the package name
@@ -247,6 +278,28 @@ impl WheelEditor {
     /// Get mutable access to the wheel info
     pub fn wheel_info_mut(&mut self) -> &mut WheelInfo {
         &mut self.wheel_info
+    }
+
+    /// Get the primary python tag (e.g., "cp312", "py3")
+    pub fn python_tag(&self) -> Option<&str> {
+        self.wheel_info.python()
+    }
+
+    /// Set the python tag for all tags in the wheel
+    pub fn set_python_tag(&mut self, python: &str) {
+        self.wheel_info.set_python(python);
+        self.wheel_info_modified = true;
+    }
+
+    /// Get the primary ABI tag (e.g., "cp312", "none")
+    pub fn abi_tag(&self) -> Option<&str> {
+        self.wheel_info.abi()
+    }
+
+    /// Set the ABI tag for all tags in the wheel
+    pub fn set_abi_tag(&mut self, abi: &str) {
+        self.wheel_info.set_abi(abi);
+        self.wheel_info_modified = true;
     }
 
     /// Get the primary platform tag
@@ -505,5 +558,169 @@ mod tests {
         let editor = WheelEditor::open(&wheel_path).unwrap();
         let result = editor.validate().unwrap();
         assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_python_tag_get() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+
+        let editor = WheelEditor::open(&wheel_path).unwrap();
+        assert_eq!(
+            editor.python_tag(),
+            Some("py3"),
+            "test wheel should have python tag 'py3'"
+        );
+    }
+
+    #[test]
+    fn test_abi_tag_get() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+
+        let editor = WheelEditor::open(&wheel_path).unwrap();
+        assert_eq!(
+            editor.abi_tag(),
+            Some("none"),
+            "test wheel should have abi tag 'none'"
+        );
+    }
+
+    #[test]
+    fn test_python_tag_set_and_persist() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+        let output_path = temp_dir.path().join("output.whl");
+
+        let mut editor = WheelEditor::open(&wheel_path).unwrap();
+        editor.set_python_tag("cp312");
+        editor.save(&output_path).unwrap();
+
+        let new_editor = WheelEditor::open(&output_path).unwrap();
+        assert_eq!(
+            new_editor.python_tag(),
+            Some("cp312"),
+            "set_python_tag should persist through save/reload"
+        );
+        // abi and platform should be unchanged
+        assert_eq!(
+            new_editor.abi_tag(),
+            Some("none"),
+            "abi tag should be unchanged after setting python tag"
+        );
+        assert_eq!(
+            new_editor.platform_tag(),
+            Some("any"),
+            "platform tag should be unchanged after setting python tag"
+        );
+    }
+
+    #[test]
+    fn test_filename() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+
+        let editor = WheelEditor::open(&wheel_path).unwrap();
+        assert_eq!(
+            editor.filename(),
+            "test_pkg-1.0.0-py3-none-any.whl",
+            "filename should match PEP 427 format"
+        );
+    }
+
+    #[test]
+    fn test_filename_after_tag_change() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+
+        let mut editor = WheelEditor::open(&wheel_path).unwrap();
+        editor.set_python_tag("cp312");
+        editor.set_abi_tag("cp312");
+        editor.set_platform_tag("linux_x86_64");
+        assert_eq!(
+            editor.filename(),
+            "test_pkg-1.0.0-cp312-cp312-linux_x86_64.whl",
+            "filename should reflect updated tags"
+        );
+    }
+
+    #[test]
+    fn test_filename_after_name_version_change() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+
+        let mut editor = WheelEditor::open(&wheel_path).unwrap();
+        editor.set_name("my-new-package");
+        editor.set_version("2.0.0");
+        assert_eq!(
+            editor.filename(),
+            "my_new_package-2.0.0-py3-none-any.whl",
+            "filename should reflect updated name and version"
+        );
+    }
+
+    #[test]
+    fn test_filename_multi_tag_dedup() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+
+        let mut editor = WheelEditor::open(&wheel_path).unwrap();
+        // Simulate a wheel with two tags that share python/abi but differ in platform
+        editor.wheel_info_mut().tags = vec![
+            WheelTag::parse("cp311-cp311-manylinux_2_17_x86_64").unwrap(),
+            WheelTag::parse("cp311-cp311-manylinux2014_x86_64").unwrap(),
+        ];
+        assert_eq!(
+            editor.filename(),
+            "test_pkg-1.0.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+            "filename should dot-join unique platform values and dedup python/abi"
+        );
+    }
+
+    #[test]
+    fn test_filename_multi_tag_all_different() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+
+        let mut editor = WheelEditor::open(&wheel_path).unwrap();
+        // Simulate a wheel with two tags that differ in all components
+        editor.wheel_info_mut().tags = vec![
+            WheelTag::parse("py2-none-any").unwrap(),
+            WheelTag::parse("py3-none-any").unwrap(),
+        ];
+        assert_eq!(
+            editor.filename(),
+            "test_pkg-1.0.0-py2.py3-none-any.whl",
+            "filename should dot-join unique python values"
+        );
+    }
+
+    #[test]
+    fn test_abi_tag_set_and_persist() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+        let output_path = temp_dir.path().join("output.whl");
+
+        let mut editor = WheelEditor::open(&wheel_path).unwrap();
+        editor.set_abi_tag("cp312");
+        editor.save(&output_path).unwrap();
+
+        let new_editor = WheelEditor::open(&output_path).unwrap();
+        assert_eq!(
+            new_editor.abi_tag(),
+            Some("cp312"),
+            "set_abi_tag should persist through save/reload"
+        );
+        // python and platform should be unchanged
+        assert_eq!(
+            new_editor.python_tag(),
+            Some("py3"),
+            "python tag should be unchanged after setting abi tag"
+        );
+        assert_eq!(
+            new_editor.platform_tag(),
+            Some("any"),
+            "platform tag should be unchanged after setting abi tag"
+        );
     }
 }

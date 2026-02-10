@@ -10,6 +10,7 @@ Usage:
 """
 
 import json
+import os
 import sys
 from typing import Optional, Tuple
 
@@ -70,6 +71,8 @@ def show(wheel: str, as_json: bool, field: Tuple[str, ...]) -> None:
         "classifiers": editor.classifiers,
         "requires_dist": editor.requires_dist,
         "project_urls": editor.project_urls,
+        "python_tag": editor.python_tag,
+        "abi_tag": editor.abi_tag,
         "platform_tag": editor.platform_tag,
     }
 
@@ -102,7 +105,7 @@ def show(wheel: str, as_json: bool, field: Tuple[str, ...]) -> None:
 
 @cli.command()
 @click.argument("wheel", type=click.Path(exists=True))
-@click.option("--output", "-o", type=click.Path(), help="Output path (default: overwrite in-place)")
+@click.option("--output", "-o", type=click.Path(), help="Output path or directory (default: overwrite in-place)")
 @click.option("--name", "pkg_name", help="Set package name")
 @click.option("--version", help="Set version")
 @click.option("--summary", help="Set summary/description")
@@ -139,6 +142,14 @@ def show(wheel: str, as_json: bool, field: Tuple[str, ...]) -> None:
     "--platform-tag",
     help="Set platform tag for the wheel (e.g., 'manylinux_2_28_x86_64')",
 )
+@click.option(
+    "--python-tag",
+    help="Set python tag for the wheel (e.g., 'cp312')",
+)
+@click.option(
+    "--abi-tag",
+    help="Set ABI tag for the wheel (e.g., 'cp312')",
+)
 def edit(
     wheel: str,
     output: Optional[str],
@@ -155,6 +166,8 @@ def edit(
     set_requires_dist: Optional[str],
     set_rpath: Tuple[Tuple[str, str], ...],
     platform_tag: Optional[str],
+    python_tag: Optional[str],
+    abi_tag: Optional[str],
 ) -> None:
     """Edit wheel metadata fields and save.
 
@@ -244,7 +257,19 @@ def edit(
     # Handle platform tag
     if platform_tag is not None:
         editor.platform_tag = platform_tag
-        click.echo(f"Set platform tag to: {platform_tag}")
+        click.echo(f"Set Platform tag to: {platform_tag}")
+        changes_made = True
+
+    # Handle python tag
+    if python_tag is not None:
+        editor.python_tag = python_tag
+        click.echo(f"Set Python tag to: {python_tag}")
+        changes_made = True
+
+    # Handle ABI tag
+    if abi_tag is not None:
+        editor.abi_tag = abi_tag
+        click.echo(f"Set ABI tag to: {abi_tag}")
         changes_made = True
 
     if not changes_made:
@@ -253,6 +278,8 @@ def edit(
 
     # Save the wheel
     try:
+        if output and os.path.isdir(output):
+            output = os.path.join(output, editor.filename)
         editor.save(output)
         if output:
             click.echo(f"Saved to: {output}")

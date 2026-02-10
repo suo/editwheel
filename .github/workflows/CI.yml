@@ -57,8 +57,8 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install editwheel --find-links dist --force-reinstall
-          pip install pytest
+          pip install editwheel --find-links dist --force-reinstall --no-index --no-deps
+          pip install editwheel pytest --find-links dist
           pytest
       - name: pytest
         if: ${{ matrix.platform.target == 'aarch64' }}
@@ -73,7 +73,8 @@ jobs:
             pip3 install -U pip pytest
           run: |
             set -e
-            pip3 install editwheel --find-links dist --force-reinstall
+            pip3 install editwheel --find-links dist --force-reinstall --no-index --no-deps
+            pip3 install editwheel pytest --find-links dist
             pytest
 
   windows:
@@ -115,8 +116,8 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/Scripts/activate
-          pip install editwheel --find-links dist --force-reinstall
-          pip install pytest
+          pip install editwheel --find-links dist --force-reinstall --no-index --no-deps
+          pip install editwheel pytest --find-links dist
           pytest
 
   macos:
@@ -151,8 +152,8 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install editwheel --find-links dist --force-reinstall
-          pip install pytest
+          pip install editwheel --find-links dist --force-reinstall --no-index --no-deps
+          pip install editwheel pytest --find-links dist
           pytest
 
   sdist:
