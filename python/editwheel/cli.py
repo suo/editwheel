@@ -9,54 +9,33 @@ Usage:
     editwheel edit <wheel>  # Modify metadata fields and save
 """
 
+import argparse
 import json
 import os
 import sys
-from typing import Optional, Tuple
-
-import click
+from importlib.metadata import version as _pkg_version
+from typing import List, Optional
 
 from editwheel.editwheel import WheelEditor
 
-
-@click.group()
-@click.version_option(version="0.2.2", prog_name="editwheel")
-def cli() -> None:
-    """High-performance Python wheel metadata editor.
-
-    Edit wheel metadata without extracting and repacking the entire wheel.
-    Achieves constant-time performance by copying unchanged files as raw
-    compressed bytes.
-    """
-    pass
+__version__ = _pkg_version("editwheel")
 
 
-@cli.command()
-@click.argument("wheel", type=click.Path(exists=True))
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-@click.option(
-    "--field",
-    "-f",
-    multiple=True,
-    help="Show only specific field(s). Can be repeated.",
-)
-def show(wheel: str, as_json: bool, field: Tuple[str, ...]) -> None:
-    """Display wheel metadata.
+def _existing_path(path: str) -> str:
+    """Argparse type that validates the path exists."""
+    if not os.path.exists(path):
+        raise argparse.ArgumentTypeError(f"path '{path}' does not exist")
+    return path
 
-    WHEEL is the path to a .whl file to inspect.
 
-    Examples:
+def _show(args: argparse.Namespace) -> None:
+    """Handle the 'show' subcommand."""
+    wheel = args.wheel
 
-        editwheel show mypackage-1.0.0-py3-none-any.whl
-
-        editwheel show mypackage.whl --json
-
-        editwheel show mypackage.whl -f name -f version
-    """
     try:
         editor = WheelEditor(wheel)
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Build metadata dict
@@ -77,18 +56,21 @@ def show(wheel: str, as_json: bool, field: Tuple[str, ...]) -> None:
     }
 
     # Filter to specific fields if requested
-    if field:
+    if args.field:
         # Normalize field names (allow both underscore and hyphen)
-        normalized_fields = {f.replace("-", "_").lower() for f in field}
+        normalized_fields = {f.replace("-", "_").lower() for f in args.field}
         metadata = {
             k: v for k, v in metadata.items() if k.lower() in normalized_fields
         }
         if not metadata:
-            click.echo(f"Error: No matching fields found for: {', '.join(field)}", err=True)
+            print(
+                f"Error: No matching fields found for: {', '.join(args.field)}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
-    if as_json:
-        click.echo(json.dumps(metadata, indent=2))
+    if args.as_json:
+        print(json.dumps(metadata, indent=2))
     else:
         # Human-readable output
         for key, value in metadata.items():
@@ -96,198 +78,246 @@ def show(wheel: str, as_json: bool, field: Tuple[str, ...]) -> None:
                 continue
             if isinstance(value, list):
                 if value:
-                    click.echo(f"{key}:")
+                    print(f"{key}:")
                     for item in value:
-                        click.echo(f"  - {item}")
+                        print(f"  - {item}")
             else:
-                click.echo(f"{key}: {value}")
+                print(f"{key}: {value}")
 
 
-@cli.command()
-@click.argument("wheel", type=click.Path(exists=True))
-@click.option("--output", "-o", type=click.Path(), help="Output path or directory (default: overwrite in-place)")
-@click.option("--name", "pkg_name", help="Set package name")
-@click.option("--version", help="Set version")
-@click.option("--summary", help="Set summary/description")
-@click.option("--author", help="Set author name")
-@click.option("--author-email", help="Set author email")
-@click.option("--license", "pkg_license", help="Set license")
-@click.option("--requires-python", help="Set Python version requirement (e.g., '>=3.8')")
-@click.option(
-    "--add-classifier",
-    multiple=True,
-    help="Add a classifier. Can be repeated.",
-)
-@click.option(
-    "--set-classifiers",
-    help="Replace all classifiers (comma-separated)",
-)
-@click.option(
-    "--add-requires-dist",
-    multiple=True,
-    help="Add a dependency. Can be repeated.",
-)
-@click.option(
-    "--set-requires-dist",
-    help="Replace all dependencies (comma-separated)",
-)
-@click.option(
-    "--set-rpath",
-    nargs=2,
-    multiple=True,
-    metavar="PATTERN RPATH",
-    help="Set RPATH for ELF files matching PATTERN. Can be repeated. Example: --set-rpath 'torch/lib/*.so' '$ORIGIN'",
-)
-@click.option(
-    "--platform-tag",
-    help="Set platform tag for the wheel (e.g., 'manylinux_2_28_x86_64')",
-)
-@click.option(
-    "--python-tag",
-    help="Set python tag for the wheel (e.g., 'cp312')",
-)
-@click.option(
-    "--abi-tag",
-    help="Set ABI tag for the wheel (e.g., 'cp312')",
-)
-def edit(
-    wheel: str,
-    output: Optional[str],
-    pkg_name: Optional[str],
-    version: Optional[str],
-    summary: Optional[str],
-    author: Optional[str],
-    author_email: Optional[str],
-    pkg_license: Optional[str],
-    requires_python: Optional[str],
-    add_classifier: Tuple[str, ...],
-    set_classifiers: Optional[str],
-    add_requires_dist: Tuple[str, ...],
-    set_requires_dist: Optional[str],
-    set_rpath: Tuple[Tuple[str, str], ...],
-    platform_tag: Optional[str],
-    python_tag: Optional[str],
-    abi_tag: Optional[str],
-) -> None:
-    """Edit wheel metadata fields and save.
+def _edit(args: argparse.Namespace) -> None:
+    """Handle the 'edit' subcommand."""
+    wheel = args.wheel
 
-    WHEEL is the path to a .whl file to edit.
-
-    Examples:
-
-        editwheel edit mypackage.whl --version 1.0.1
-
-        editwheel edit mypackage.whl --author "New Author" -o modified.whl
-
-        editwheel edit mypackage.whl --add-requires-dist "click>=8.0"
-
-        editwheel edit torch.whl --set-rpath 'torch/lib/*.so' '$ORIGIN'
-
-        editwheel edit torch.whl --platform-tag manylinux_2_28_x86_64
-    """
     try:
         editor = WheelEditor(wheel)
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     changes_made = False
 
     # Apply single-value field changes
-    if pkg_name is not None:
-        editor.name = pkg_name
+    if args.pkg_name is not None:
+        editor.name = args.pkg_name
         changes_made = True
 
-    if version is not None:
-        editor.version = version
+    if args.version is not None:
+        editor.version = args.version
         changes_made = True
 
-    if summary is not None:
-        editor.summary = summary
+    if args.summary is not None:
+        editor.summary = args.summary
         changes_made = True
 
-    if author is not None:
-        editor.author = author
+    if args.author is not None:
+        editor.author = args.author
         changes_made = True
 
-    if author_email is not None:
-        editor.author_email = author_email
+    if args.author_email is not None:
+        editor.author_email = args.author_email
         changes_made = True
 
-    if pkg_license is not None:
-        editor.license = pkg_license
+    if args.pkg_license is not None:
+        editor.license = args.pkg_license
         changes_made = True
 
-    if requires_python is not None:
-        editor.requires_python = requires_python
+    if args.requires_python is not None:
+        editor.requires_python = args.requires_python
         changes_made = True
 
     # Handle classifiers
-    if set_classifiers is not None:
-        editor.classifiers = [c.strip() for c in set_classifiers.split(",") if c.strip()]
+    if args.set_classifiers is not None:
+        editor.classifiers = [
+            c.strip() for c in args.set_classifiers.split(",") if c.strip()
+        ]
         changes_made = True
-    elif add_classifier:
+    elif args.add_classifier:
         classifiers = list(editor.classifiers)
-        classifiers.extend(add_classifier)
+        classifiers.extend(args.add_classifier)
         editor.classifiers = classifiers
         changes_made = True
 
     # Handle requires_dist
-    if set_requires_dist is not None:
-        editor.requires_dist = [d.strip() for d in set_requires_dist.split(",") if d.strip()]
+    if args.set_requires_dist is not None:
+        editor.requires_dist = [
+            d.strip() for d in args.set_requires_dist.split(",") if d.strip()
+        ]
         changes_made = True
-    elif add_requires_dist:
+    elif args.add_requires_dist:
         deps = list(editor.requires_dist)
-        deps.extend(add_requires_dist)
+        deps.extend(args.add_requires_dist)
         editor.requires_dist = deps
         changes_made = True
 
     # Handle RPATH modifications
-    if set_rpath:
-        for pattern, rpath in set_rpath:
+    if args.set_rpath:
+        for pattern, rpath in args.set_rpath:
             try:
                 count = editor.set_rpath(pattern, rpath)
-                click.echo(f"Set RPATH on {count} file(s) matching '{pattern}'")
+                print(f"Set RPATH on {count} file(s) matching '{pattern}'")
                 if count > 0:
                     changes_made = True
             except Exception as e:
-                click.echo(f"Error setting RPATH for '{pattern}': {e}", err=True)
+                print(f"Error setting RPATH for '{pattern}': {e}", file=sys.stderr)
                 sys.exit(1)
 
     # Handle platform tag
-    if platform_tag is not None:
-        editor.platform_tag = platform_tag
-        click.echo(f"Set Platform tag to: {platform_tag}")
+    if args.platform_tag is not None:
+        editor.platform_tag = args.platform_tag
+        print(f"Set Platform tag to: {args.platform_tag}")
         changes_made = True
 
     # Handle python tag
-    if python_tag is not None:
-        editor.python_tag = python_tag
-        click.echo(f"Set Python tag to: {python_tag}")
+    if args.python_tag is not None:
+        editor.python_tag = args.python_tag
+        print(f"Set Python tag to: {args.python_tag}")
         changes_made = True
 
     # Handle ABI tag
-    if abi_tag is not None:
-        editor.abi_tag = abi_tag
-        click.echo(f"Set ABI tag to: {abi_tag}")
+    if args.abi_tag is not None:
+        editor.abi_tag = args.abi_tag
+        print(f"Set ABI tag to: {args.abi_tag}")
         changes_made = True
 
     if not changes_made:
-        click.echo("No changes specified. Use --help to see available options.", err=True)
+        print(
+            "No changes specified. Use --help to see available options.", file=sys.stderr
+        )
         sys.exit(1)
 
     # Save the wheel
+    output = args.output
     try:
         if output and os.path.isdir(output):
             output = os.path.join(output, editor.filename)
         editor.save(output)
         if output:
-            click.echo(f"Saved to: {output}")
+            print(f"Saved to: {output}")
         else:
-            click.echo(f"Updated: {wheel}")
+            print(f"Updated: {wheel}")
     except Exception as e:
-        click.echo(f"Error saving wheel: {e}", err=True)
+        print(f"Error saving wheel: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build and return the argument parser."""
+    parser = argparse.ArgumentParser(
+        prog="editwheel",
+        description=(
+            "High-performance Python wheel metadata editor.\n\n"
+            "Edit wheel metadata without extracting and repacking the entire wheel.\n"
+            "Achieves constant-time performance by copying unchanged files as raw\n"
+            "compressed bytes."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"editwheel {__version__}"
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # --- show subcommand ---
+    show_parser = subparsers.add_parser(
+        "show",
+        help="Display wheel metadata",
+        description="Display wheel metadata.",
+    )
+    show_parser.add_argument("wheel", type=_existing_path, help="Path to a .whl file to inspect")
+    show_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Output as JSON"
+    )
+    show_parser.add_argument(
+        "--field",
+        "-f",
+        action="append",
+        help="Show only specific field(s). Can be repeated.",
+    )
+
+    # --- edit subcommand ---
+    edit_parser = subparsers.add_parser(
+        "edit",
+        help="Edit wheel metadata fields and save",
+        description="Edit wheel metadata fields and save.",
+    )
+    edit_parser.add_argument("wheel", type=_existing_path, help="Path to a .whl file to edit")
+    edit_parser.add_argument(
+        "--output",
+        "-o",
+        help="Output path or directory (default: overwrite in-place)",
+    )
+    edit_parser.add_argument("--name", dest="pkg_name", help="Set package name")
+    edit_parser.add_argument("--version", help="Set version")
+    edit_parser.add_argument("--summary", help="Set summary/description")
+    edit_parser.add_argument("--author", help="Set author name")
+    edit_parser.add_argument("--author-email", help="Set author email")
+    edit_parser.add_argument("--license", dest="pkg_license", help="Set license")
+    edit_parser.add_argument(
+        "--requires-python",
+        help="Set Python version requirement (e.g., '>=3.8')",
+    )
+    edit_parser.add_argument(
+        "--add-classifier",
+        action="append",
+        default=[],
+        help="Add a classifier. Can be repeated.",
+    )
+    edit_parser.add_argument(
+        "--set-classifiers",
+        help="Replace all classifiers (comma-separated)",
+    )
+    edit_parser.add_argument(
+        "--add-requires-dist",
+        action="append",
+        default=[],
+        help="Add a dependency. Can be repeated.",
+    )
+    edit_parser.add_argument(
+        "--set-requires-dist",
+        help="Replace all dependencies (comma-separated)",
+    )
+    edit_parser.add_argument(
+        "--set-rpath",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("PATTERN", "RPATH"),
+        help=(
+            "Set RPATH for ELF files matching PATTERN. Can be repeated. "
+            "Example: --set-rpath 'torch/lib/*.so' '$ORIGIN'"
+        ),
+    )
+    edit_parser.add_argument(
+        "--platform-tag",
+        help="Set platform tag for the wheel (e.g., 'manylinux_2_28_x86_64')",
+    )
+    edit_parser.add_argument(
+        "--python-tag",
+        help="Set python tag for the wheel (e.g., 'cp312')",
+    )
+    edit_parser.add_argument(
+        "--abi-tag",
+        help="Set ABI tag for the wheel (e.g., 'cp312')",
+    )
+
+    return parser
+
+
+def cli(args: Optional[List[str]] = None) -> None:
+    """Main CLI entrypoint.
+
+    Args:
+        args: Command-line arguments. If None, uses sys.argv.
+    """
+    parser = _build_parser()
+    parsed = parser.parse_args(args)
+
+    if parsed.command == "show":
+        _show(parsed)
+    elif parsed.command == "edit":
+        _edit(parsed)
 
 
 if __name__ == "__main__":
