@@ -834,6 +834,108 @@ class TestCLI:
             editor = WheelEditor(str(output_path))
             assert editor.platform_tag == "manylinux_2_28_x86_64"
 
+    def test_cli_edit_python_tag(self):
+        """Test CLI edit command to change python tag."""
+        from click.testing import CliRunner
+        from editwheel.cli import cli
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+            output_path = temp_path / "edited.whl"
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "edit",
+                    str(test_wheel),
+                    "--python-tag",
+                    "cp312",
+                    "-o",
+                    str(output_path),
+                ],
+            )
+
+            assert result.exit_code == 0, f"CLI failed: {result.output}"
+            assert "python tag" in result.output.lower()
+
+            # Verify the change
+            editor = WheelEditor(str(output_path))
+            assert editor.python_tag == "cp312"
+            # Other components should be unchanged
+            assert editor.abi_tag == "none", "abi tag should be unchanged"
+            assert editor.platform_tag == "any", "platform tag should be unchanged"
+
+    def test_cli_edit_abi_tag(self):
+        """Test CLI edit command to change ABI tag."""
+        from click.testing import CliRunner
+        from editwheel.cli import cli
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+            output_path = temp_path / "edited.whl"
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "edit",
+                    str(test_wheel),
+                    "--abi-tag",
+                    "cp312",
+                    "-o",
+                    str(output_path),
+                ],
+            )
+
+            assert result.exit_code == 0, f"CLI failed: {result.output}"
+            assert "abi tag" in result.output.lower()
+
+            # Verify the change
+            editor = WheelEditor(str(output_path))
+            assert editor.abi_tag == "cp312"
+            # Other components should be unchanged
+            assert editor.python_tag == "py3", "python tag should be unchanged"
+            assert editor.platform_tag == "any", "platform tag should be unchanged"
+
+    def test_cli_edit_output_dir(self):
+        """Test CLI edit with -o pointing to a directory uses computed filename."""
+        from click.testing import CliRunner
+        from editwheel.cli import cli
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+            output_dir = temp_path / "output"
+            output_dir.mkdir()
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "edit",
+                    str(test_wheel),
+                    "--python-tag",
+                    "cp312",
+                    "--abi-tag",
+                    "cp312",
+                    "-o",
+                    str(output_dir),
+                ],
+            )
+
+            assert result.exit_code == 0, f"CLI failed: {result.output}"
+
+            # Should have saved with the computed PEP 427 filename
+            expected_path = output_dir / "test_package-1.0.0-cp312-cp312-any.whl"
+            assert expected_path.exists(), (
+                f"Expected wheel at {expected_path}, "
+                f"got files: {list(output_dir.iterdir())}"
+            )
+            assert str(expected_path) in result.output
+
     def test_cli_show_json(self):
         """Test CLI show command with JSON output."""
         from click.testing import CliRunner

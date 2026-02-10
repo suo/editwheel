@@ -133,6 +133,30 @@ impl WheelInfo {
         output
     }
 
+    /// Get the primary python tag (first tag's python component)
+    pub fn python(&self) -> Option<&str> {
+        self.tags.first().map(|t| t.python.as_str())
+    }
+
+    /// Set the python component for all tags
+    pub fn set_python(&mut self, python: &str) {
+        for tag in &mut self.tags {
+            tag.python = python.to_string();
+        }
+    }
+
+    /// Get the primary ABI tag (first tag's abi component)
+    pub fn abi(&self) -> Option<&str> {
+        self.tags.first().map(|t| t.abi.as_str())
+    }
+
+    /// Set the ABI component for all tags
+    pub fn set_abi(&mut self, abi: &str) {
+        for tag in &mut self.tags {
+            tag.abi = abi.to_string();
+        }
+    }
+
     /// Get the primary platform tag (first tag's platform)
     pub fn platform(&self) -> Option<&str> {
         self.tags.first().map(|t| t.platform.as_str())
@@ -200,6 +224,63 @@ Tag: cp311-cp311-linux_x86_64
         let mut info = WheelInfo::parse(content).unwrap();
         info.set_platform("manylinux_2_28_x86_64");
         assert_eq!(info.tags[0].platform, "manylinux_2_28_x86_64");
+    }
+
+    #[test]
+    fn test_set_python() {
+        let content = r#"Wheel-Version: 1.0
+Generator: test
+Root-Is-Purelib: false
+Tag: py3-none-linux_x86_64
+Tag: py2-none-linux_x86_64
+"#;
+
+        let mut info = WheelInfo::parse(content).unwrap();
+        info.set_python("cp312");
+        assert_eq!(
+            info.tags[0].python, "cp312",
+            "set_python should update the first tag"
+        );
+        assert_eq!(
+            info.tags[1].python, "cp312",
+            "set_python should update all tags"
+        );
+        // other components unchanged
+        assert_eq!(info.tags[0].abi, "none", "set_python should not change abi");
+        assert_eq!(
+            info.tags[0].platform, "linux_x86_64",
+            "set_python should not change platform"
+        );
+    }
+
+    #[test]
+    fn test_set_abi() {
+        let content = r#"Wheel-Version: 1.0
+Generator: test
+Root-Is-Purelib: false
+Tag: cp311-none-linux_x86_64
+Tag: cp311-none-linux_aarch64
+"#;
+
+        let mut info = WheelInfo::parse(content).unwrap();
+        info.set_abi("cp311");
+        assert_eq!(
+            info.tags[0].abi, "cp311",
+            "set_abi should update the first tag"
+        );
+        assert_eq!(
+            info.tags[1].abi, "cp311",
+            "set_abi should update all tags"
+        );
+        // other components unchanged
+        assert_eq!(
+            info.tags[0].python, "cp311",
+            "set_abi should not change python"
+        );
+        assert_eq!(
+            info.tags[1].platform, "linux_aarch64",
+            "set_abi should not change platform"
+        );
     }
 
     #[test]
