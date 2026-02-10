@@ -755,28 +755,47 @@ class TestAddRequiresDist:
 class TestCLI:
     """Tests for CLI commands."""
 
-    def test_cli_help(self):
-        """Test that CLI help works."""
-        from click.testing import CliRunner
+    def _run_cli(self, args):
+        """Run the CLI with the given args and capture output/exit code.
+
+        Returns a SimpleNamespace with .exit_code, .output, and .stderr.
+        """
+        import contextlib
+        from types import SimpleNamespace
+
         from editwheel.cli import cli
 
-        runner = CliRunner()
-        result = runner.invoke(cli, ["--help"])
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        exit_code = 0
+        try:
+            with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(
+                stderr_buf
+            ):
+                cli(args)
+        except SystemExit as e:
+            exit_code = e.code if e.code is not None else 0
+
+        return SimpleNamespace(
+            exit_code=exit_code,
+            output=stdout_buf.getvalue(),
+            stderr=stderr_buf.getvalue(),
+        )
+
+    def test_cli_help(self):
+        """Test that CLI help works."""
+        result = self._run_cli(["--help"])
 
         assert result.exit_code == 0
         assert "wheel metadata editor" in result.output.lower()
 
     def test_cli_show(self):
         """Test CLI show command."""
-        from click.testing import CliRunner
-        from editwheel.cli import cli
-
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             test_wheel = create_test_wheel(temp_path)
 
-            runner = CliRunner()
-            result = runner.invoke(cli, ["show", str(test_wheel)])
+            result = self._run_cli(["show", str(test_wheel)])
 
             assert result.exit_code == 0
             assert "test-package" in result.output
@@ -784,17 +803,12 @@ class TestCLI:
 
     def test_cli_edit_version(self):
         """Test CLI edit command to change version."""
-        from click.testing import CliRunner
-        from editwheel.cli import cli
-
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             test_wheel = create_test_wheel(temp_path)
             output_path = temp_path / "edited.whl"
 
-            runner = CliRunner()
-            result = runner.invoke(
-                cli,
+            result = self._run_cli(
                 ["edit", str(test_wheel), "--version", "2.0.0", "-o", str(output_path)],
             )
 
@@ -806,17 +820,12 @@ class TestCLI:
 
     def test_cli_edit_platform_tag(self):
         """Test CLI edit command to change platform tag."""
-        from click.testing import CliRunner
-        from editwheel.cli import cli
-
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             test_wheel = create_test_wheel(temp_path)
             output_path = temp_path / "edited.whl"
 
-            runner = CliRunner()
-            result = runner.invoke(
-                cli,
+            result = self._run_cli(
                 [
                     "edit",
                     str(test_wheel),
@@ -836,17 +845,12 @@ class TestCLI:
 
     def test_cli_edit_python_tag(self):
         """Test CLI edit command to change python tag."""
-        from click.testing import CliRunner
-        from editwheel.cli import cli
-
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             test_wheel = create_test_wheel(temp_path)
             output_path = temp_path / "edited.whl"
 
-            runner = CliRunner()
-            result = runner.invoke(
-                cli,
+            result = self._run_cli(
                 [
                     "edit",
                     str(test_wheel),
@@ -857,7 +861,7 @@ class TestCLI:
                 ],
             )
 
-            assert result.exit_code == 0, f"CLI failed: {result.output}"
+            assert result.exit_code == 0, f"CLI failed: {result.output}{result.stderr}"
             assert "python tag" in result.output.lower()
 
             # Verify the change
@@ -869,17 +873,12 @@ class TestCLI:
 
     def test_cli_edit_abi_tag(self):
         """Test CLI edit command to change ABI tag."""
-        from click.testing import CliRunner
-        from editwheel.cli import cli
-
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             test_wheel = create_test_wheel(temp_path)
             output_path = temp_path / "edited.whl"
 
-            runner = CliRunner()
-            result = runner.invoke(
-                cli,
+            result = self._run_cli(
                 [
                     "edit",
                     str(test_wheel),
@@ -890,7 +889,7 @@ class TestCLI:
                 ],
             )
 
-            assert result.exit_code == 0, f"CLI failed: {result.output}"
+            assert result.exit_code == 0, f"CLI failed: {result.output}{result.stderr}"
             assert "abi tag" in result.output.lower()
 
             # Verify the change
@@ -902,18 +901,13 @@ class TestCLI:
 
     def test_cli_edit_output_dir(self):
         """Test CLI edit with -o pointing to a directory uses computed filename."""
-        from click.testing import CliRunner
-        from editwheel.cli import cli
-
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             test_wheel = create_test_wheel(temp_path)
             output_dir = temp_path / "output"
             output_dir.mkdir()
 
-            runner = CliRunner()
-            result = runner.invoke(
-                cli,
+            result = self._run_cli(
                 [
                     "edit",
                     str(test_wheel),
@@ -926,7 +920,7 @@ class TestCLI:
                 ],
             )
 
-            assert result.exit_code == 0, f"CLI failed: {result.output}"
+            assert result.exit_code == 0, f"CLI failed: {result.output}{result.stderr}"
 
             # Should have saved with the computed PEP 427 filename
             expected_path = output_dir / "test_package-1.0.0-cp312-cp312-any.whl"
@@ -938,15 +932,11 @@ class TestCLI:
 
     def test_cli_show_json(self):
         """Test CLI show command with JSON output."""
-        from click.testing import CliRunner
-        from editwheel.cli import cli
-
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             test_wheel = create_test_wheel(temp_path)
 
-            runner = CliRunner()
-            result = runner.invoke(cli, ["show", str(test_wheel), "--json"])
+            result = self._run_cli(["show", str(test_wheel), "--json"])
 
             assert result.exit_code == 0
 

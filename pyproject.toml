@@ -23,9 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Build Tools",
 ]
-dependencies = [
-    "click>=8.1.8",
-]
+dependencies = []
 
 [project.scripts]
 editwheel = "editwheel.cli:cli"
