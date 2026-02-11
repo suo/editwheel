@@ -1,6 +1,6 @@
 [package]
 name = "editwheel"
-version = "0.2.2"
+version = "0.2.4"
 edition = "2021"
 description = "High-performance Python wheel metadata editor"
 license = "MIT"
