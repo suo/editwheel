@@ -30,6 +30,11 @@ pub fn dist_info_name(name: &str, version: &str) -> String {
     format!("{}-{}.dist-info", normalize_dist_info_name(name), version)
 }
 
+/// Compute the data directory name from the package name and version
+pub fn data_dir_name(name: &str, version: &str) -> String {
+    format!("{}-{}.data", normalize_dist_info_name(name), version)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,6 +57,14 @@ mod tests {
         assert_eq!(
             dist_info_name("my-package", "1.0.0"),
             "my_package-1.0.0.dist-info"
+        );
+    }
+
+    #[test]
+    fn test_data_dir_name() {
+        assert_eq!(
+            data_dir_name("my-package", "1.0.0"),
+            "my_package-1.0.0.data"
         );
     }
 }

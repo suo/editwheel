@@ -48,6 +48,7 @@ pub use error::ValidationResult;
 pub use error::WheelError;
 pub use error::WheelInfoError;
 pub use metadata::Metadata;
+pub use name::data_dir_name;
 pub use name::dist_info_name;
 pub use name::normalize_dist_info_name;
 pub use record::Record;
