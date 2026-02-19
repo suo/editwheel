@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 use crate::error::WheelError;
 use crate::metadata::Metadata;
+use crate::name::data_dir_name;
 use crate::record::Record;
 use crate::record::RecordEntry;
 use crate::record::hash_content;
@@ -47,6 +48,14 @@ pub fn write_modified<R: Read + Seek, W: Write + Seek>(
 
     let needs_rename = old_dist_info != new_dist_info;
 
+    let old_data_dir = format!(
+        "{}.data",
+        old_dist_info
+            .strip_suffix(".dist-info")
+            .expect("old_dist_info must end with .dist-info")
+    );
+    let new_data_dir = data_dir_name(&metadata.name, &metadata.version);
+
     // Phase 1: Copy all files using raw copy (no decompression)
     for i in 0..source.len() {
         let entry = source.by_index_raw(i)?;
@@ -57,9 +66,11 @@ pub fn write_modified<R: Read + Seek, W: Write + Seek>(
             continue;
         }
 
-        // Determine the new path (handle dist-info rename for version changes)
+        // Determine the new path (handle dist-info and .data rename for version changes)
         let new_name = if needs_rename && name.starts_with(old_dist_info) {
             name.replacen(old_dist_info, new_dist_info, 1)
+        } else if needs_rename && name.starts_with(&old_data_dir) {
+            name.replacen(&old_data_dir, &new_data_dir, 1)
         } else {
             name.clone()
         };
@@ -162,6 +173,14 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
     let needs_rename = old_dist_info != new_dist_info;
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
+    let old_data_dir = format!(
+        "{}.data",
+        old_dist_info
+            .strip_suffix(".dist-info")
+            .expect("old_dist_info must end with .dist-info")
+    );
+    let new_data_dir = data_dir_name(&metadata.name, &metadata.version);
+
     // Phase 1: Copy all files, handling modifications
     for i in 0..source.len() {
         let entry = source.by_index_raw(i)?;
@@ -177,9 +196,11 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
             continue;
         }
 
-        // Determine the new path (handle dist-info rename for version changes)
+        // Determine the new path (handle dist-info and .data rename for version changes)
         let new_name = if needs_rename && name.starts_with(old_dist_info) {
             name.replacen(old_dist_info, new_dist_info, 1)
+        } else if needs_rename && name.starts_with(&old_data_dir) {
+            name.replacen(&old_data_dir, &new_data_dir, 1)
         } else {
             name.clone()
         };
@@ -404,5 +425,121 @@ mod tests {
             }
         }
         assert!(found_new_metadata, "New METADATA path not found");
+    }
+
+    fn create_test_wheel_with_data() -> Vec<u8> {
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buf);
+            let options = SimpleFileOptions::default();
+
+            zip.start_file("test_pkg/__init__.py", options).unwrap();
+            zip.write_all(b"__version__ = '1.0.0'\n").unwrap();
+
+            zip.start_file("test_pkg-1.0.0.data/data/bin/mytool", options)
+                .unwrap();
+            zip.write_all(b"#!/bin/sh\necho hello\n").unwrap();
+
+            let metadata = "Metadata-Version: 2.1\nName: test-pkg\nVersion: 1.0.0\n";
+            zip.start_file("test_pkg-1.0.0.dist-info/METADATA", options)
+                .unwrap();
+            zip.write_all(metadata.as_bytes()).unwrap();
+
+            let wheel =
+                "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n";
+            zip.start_file("test_pkg-1.0.0.dist-info/WHEEL", options)
+                .unwrap();
+            zip.write_all(wheel.as_bytes()).unwrap();
+
+            let record = "test_pkg/__init__.py,sha256=abc,21\ntest_pkg-1.0.0.data/data/bin/mytool,sha256=xyz,21\ntest_pkg-1.0.0.dist-info/METADATA,sha256=def,50\ntest_pkg-1.0.0.dist-info/WHEEL,sha256=ghi,70\ntest_pkg-1.0.0.dist-info/RECORD,,\n";
+            zip.start_file("test_pkg-1.0.0.dist-info/RECORD", options)
+                .unwrap();
+            zip.write_all(record.as_bytes()).unwrap();
+
+            zip.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    fn assert_data_dir_renamed(output_data: Vec<u8>) {
+        let mut result = ZipArchive::new(Cursor::new(output_data)).unwrap();
+
+        let mut found_renamed_data = false;
+        let mut found_old_data = false;
+        for i in 0..result.len() {
+            let file = result.by_index(i).unwrap();
+            if file.name() == "test_pkg-1.0.1.data/data/bin/mytool" {
+                found_renamed_data = true;
+            }
+            if file.name().starts_with("test_pkg-1.0.0.data/") {
+                found_old_data = true;
+            }
+        }
+        assert!(
+            found_renamed_data,
+            ".data dir should be renamed to new version"
+        );
+        assert!(!found_old_data, "Old .data dir should not remain");
+    }
+
+    fn data_dir_test_fixtures() -> (ZipArchive<Cursor<Vec<u8>>>, Metadata, Record) {
+        let wheel_data = create_test_wheel_with_data();
+        let source = ZipArchive::new(Cursor::new(wheel_data)).unwrap();
+
+        let mut metadata = Metadata::default();
+        metadata.metadata_version = "2.1".to_string();
+        metadata.name = "test-pkg".to_string();
+        metadata.version = "1.0.1".to_string();
+
+        let record = Record::parse(
+            "test_pkg-1.0.0.data/data/bin/mytool,sha256=abc,21\ntest_pkg-1.0.0.dist-info/WHEEL,sha256=ghi,70\n",
+        )
+        .unwrap();
+
+        (source, metadata, record)
+    }
+
+    #[test]
+    fn test_write_modified_renames_data_dir() {
+        let (mut source, metadata, record) = data_dir_test_fixtures();
+
+        let mut output = Cursor::new(Vec::new());
+        write_modified(
+            &mut source,
+            &mut output,
+            &metadata,
+            &record,
+            "test_pkg-1.0.0.dist-info",
+            "test_pkg-1.0.1.dist-info",
+        )
+        .unwrap();
+
+        assert_data_dir_renamed(output.into_inner());
+    }
+
+    #[test]
+    fn test_write_modified_extended_renames_data_dir() {
+        let (mut source, metadata, record) = data_dir_test_fixtures();
+
+        let wheel_info = crate::wheel_info::WheelInfo::parse(
+            "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: false\nTag: py3-none-manylinux_2_17_x86_64\n",
+        )
+        .unwrap();
+
+        let modified_files = HashMap::new();
+        let mut output = Cursor::new(Vec::new());
+        write_modified_extended(
+            &mut source,
+            &mut output,
+            &metadata,
+            &record,
+            "test_pkg-1.0.0.dist-info",
+            "test_pkg-1.0.1.dist-info",
+            &modified_files,
+            Some(&wheel_info),
+        )
+        .unwrap();
+
+        assert_data_dir_renamed(output.into_inner());
     }
 }
