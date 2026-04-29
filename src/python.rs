@@ -5,11 +5,83 @@ use pyo3::exceptions::PyIOError;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
+use pyo3::types::PyBytes;
 use pyo3::types::PyList;
 
+use crate::ValidationError;
+use crate::ValidationResult;
 use crate::WheelEditor;
 use crate::WheelError;
 use crate::normalize_dist_info_name as rust_normalize_dist_info_name;
+
+/// Render a `ValidationError` as a single human-readable line.
+fn format_validation_error(err: &ValidationError) -> String {
+    match err {
+        ValidationError::HashMismatch {
+            path,
+            expected,
+            actual,
+        } => format!("hash mismatch for {path}: expected {expected}, got {actual}"),
+        ValidationError::MissingFile { path } => {
+            format!("missing file (in RECORD but not in archive): {path}")
+        }
+        ValidationError::ExtraFile { path } => {
+            format!("extra file (in archive but not in RECORD): {path}")
+        }
+    }
+}
+
+/// Result of `WheelEditor.validate()`.
+///
+/// Mirrors the Rust `ValidationResult` — exposes `is_valid` (bool) plus
+/// `errors` (a list of human-readable strings, empty when the wheel is
+/// valid).
+#[pyclass(name = "ValidationResult")]
+pub struct PyValidationResult {
+    is_valid: bool,
+    errors: Vec<String>,
+}
+
+impl PyValidationResult {
+    fn from_rust(result: ValidationResult) -> Self {
+        Self {
+            is_valid: result.is_valid(),
+            errors: result.errors.iter().map(format_validation_error).collect(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyValidationResult {
+    /// True if no validation errors were found.
+    #[getter]
+    fn is_valid(&self) -> bool {
+        self.is_valid
+    }
+
+    /// List of validation errors as human-readable strings. Empty when valid.
+    #[getter]
+    fn errors(&self) -> Vec<String> {
+        self.errors.clone()
+    }
+
+    /// Bool conversion: True iff the wheel is valid (so
+    /// `if editor.validate(): ...` works as expected).
+    fn __bool__(&self) -> bool {
+        self.is_valid
+    }
+
+    fn __repr__(&self) -> String {
+        if self.is_valid {
+            "ValidationResult(valid=True)".to_string()
+        } else {
+            format!(
+                "ValidationResult(valid=False, errors={} error(s))",
+                self.errors.len()
+            )
+        }
+    }
+}
 
 /// Convert WheelError to PyErr
 impl From<WheelError> for PyErr {
@@ -298,6 +370,62 @@ impl PyWheelEditor {
         self.inner.add_requires_dist(dep);
     }
 
+    /// Get the dist-info directory name as it would appear in the saved wheel.
+    ///
+    /// Reflects the *current* metadata, so this is safe to use for
+    /// constructing a path to pass to `add_file` even after `name` or
+    /// `version` has been changed.
+    ///
+    /// Returns:
+    ///     The dist-info directory name (e.g., "torch-2.5.0.dist-info")
+    #[getter]
+    fn dist_info_dir(&self) -> String {
+        self.inner.dist_info_dir()
+    }
+
+    /// Add a new file to the wheel archive.
+    ///
+    /// Args:
+    ///     path: Full archive path for the new file. If the dist-info
+    ///           directory is renamed at save time (because the package name
+    ///           or version changed), paths under the old prefix are
+    ///           rewritten to the new prefix automatically.
+    ///     content: File content as bytes.
+    ///
+    /// Raises:
+    ///     ValueError: At save time, if `path` collides with a file already
+    ///                 in the source archive or with a generated dist-info
+    ///                 file (METADATA, RECORD, WHEEL).
+    ///
+    /// Example:
+    ///     >>> editor.add_file(
+    ///     ...     f"{editor.dist_info_dir}/build-details.json",
+    ///     ...     json.dumps(details).encode(),
+    ///     ... )
+    fn add_file(&mut self, path: &str, content: &Bound<'_, PyBytes>) {
+        self.inner.add_file(path.to_string(), content.as_bytes().to_vec());
+    }
+
+    /// True if any new files have been queued via `add_file`.
+    fn has_added_files(&self) -> bool {
+        self.inner.has_added_files()
+    }
+
+    /// Validate the wheel: every file in RECORD must exist in the archive
+    /// with a matching SHA-256 hash, and every file in the archive (apart
+    /// from RECORD itself) must appear in RECORD.
+    ///
+    /// Note: this is **not** constant-time — it reads and re-hashes every
+    /// entry, so cost is O(wheel_size). It validates the wheel as it
+    /// currently exists on disk (i.e. the file passed to the constructor),
+    /// not the in-memory pending edits.
+    ///
+    /// Returns:
+    ///     A `ValidationResult` with `is_valid` and `errors` properties.
+    fn validate(&self) -> PyResult<PyValidationResult> {
+        Ok(PyValidationResult::from_rust(self.inner.validate()?))
+    }
+
     /// Check if any files have been modified.
     ///
     /// Returns True if any ELF files have been modified (e.g., via set_rpath).
@@ -500,6 +628,7 @@ fn normalize_dist_info_name(name: &str) -> String {
 #[pymodule]
 fn editwheel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWheelEditor>()?;
+    m.add_class::<PyValidationResult>()?;
     m.add_function(wrap_pyfunction!(normalize_dist_info_name, m)?)?;
     Ok(())
 }

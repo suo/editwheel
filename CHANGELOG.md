@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-29
+
+### Added
+
+- `WheelEditor.add_file(path, content)` to inject brand-new files into the wheel archive (e.g. a `build-details.json` stamped into `.dist-info/`). Paths under the old dist-info / `.data` prefix are rewritten when the wheel is renamed, and collisions with existing source files or generated dist-info files (METADATA/RECORD/WHEEL) are rejected at save time.
+- `WheelEditor.dist_info_dir` getter returning the dist-info directory name as it would appear in the saved wheel — useful for constructing paths to pass to `add_file`.
+- `WheelEditor.validate()` Python binding (previously Rust-only). Returns a `ValidationResult` with `is_valid` and `errors` (list of human-readable strings); supports `bool(result)` as a shortcut for `result.is_valid`.
+- `editwheel edit --add-file ARCHIVE_PATH SRC` and `editwheel edit --add-dist-info-file FILENAME SRC` to expose the new file-injection API on the CLI. `editwheel show` now also reports `dist_info_dir`.
+- `editwheel validate WHEEL [--json]` CLI subcommand exiting non-zero on validation errors.
+
 ## [0.2.5] - 2026-02-19
 
 ### Fixed

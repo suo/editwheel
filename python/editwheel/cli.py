@@ -53,6 +53,7 @@ def _show(args: argparse.Namespace) -> None:
         "python_tag": editor.python_tag,
         "abi_tag": editor.abi_tag,
         "platform_tag": editor.platform_tag,
+        "dist_info_dir": editor.dist_info_dir,
     }
 
     # Filter to specific fields if requested
@@ -180,6 +181,41 @@ def _edit(args: argparse.Namespace) -> None:
         print(f"Set ABI tag to: {args.abi_tag}")
         changes_made = True
 
+    # Handle file injection. --add-file accepts the full archive path;
+    # --add-dist-info-file is a convenience that prefixes with the wheel's
+    # dist-info directory (resolved against the *post-edit* metadata).
+    if args.add_file:
+        for archive_path, src in args.add_file:
+            try:
+                with open(src, "rb") as f:
+                    content = f.read()
+            except OSError as e:
+                print(f"Error reading '{src}': {e}", file=sys.stderr)
+                sys.exit(1)
+            editor.add_file(archive_path, content)
+            print(f"Added file: {archive_path} ({len(content)} bytes from {src})")
+            changes_made = True
+
+    if args.add_dist_info_file:
+        for filename, src in args.add_dist_info_file:
+            if "/" in filename or "\\" in filename:
+                print(
+                    f"Error: --add-dist-info-file expects a leaf filename, got '{filename}'. "
+                    "Use --add-file for nested paths.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            try:
+                with open(src, "rb") as f:
+                    content = f.read()
+            except OSError as e:
+                print(f"Error reading '{src}': {e}", file=sys.stderr)
+                sys.exit(1)
+            archive_path = f"{editor.dist_info_dir}/{filename}"
+            editor.add_file(archive_path, content)
+            print(f"Added dist-info file: {archive_path} ({len(content)} bytes from {src})")
+            changes_made = True
+
     if not changes_made:
         print(
             "No changes specified. Use --help to see available options.", file=sys.stderr
@@ -198,6 +234,37 @@ def _edit(args: argparse.Namespace) -> None:
             print(f"Updated: {wheel}")
     except Exception as e:
         print(f"Error saving wheel: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _validate(args: argparse.Namespace) -> None:
+    """Handle the 'validate' subcommand."""
+    wheel = args.wheel
+
+    try:
+        editor = WheelEditor(wheel)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    result = editor.validate()
+
+    if args.as_json:
+        print(
+            json.dumps(
+                {"is_valid": result.is_valid, "errors": result.errors},
+                indent=2,
+            )
+        )
+    else:
+        if result.is_valid:
+            print(f"OK: {wheel} is valid")
+        else:
+            print(f"FAIL: {wheel} has {len(result.errors)} error(s):", file=sys.stderr)
+            for err in result.errors:
+                print(f"  - {err}", file=sys.stderr)
+
+    if not result.is_valid:
         sys.exit(1)
 
 
@@ -301,6 +368,49 @@ def _build_parser() -> argparse.ArgumentParser:
         "--abi-tag",
         help="Set ABI tag for the wheel (e.g., 'cp312')",
     )
+    edit_parser.add_argument(
+        "--add-file",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("ARCHIVE_PATH", "SRC"),
+        help=(
+            "Add a new file to the wheel. ARCHIVE_PATH is the full path "
+            "inside the archive; SRC is a local file whose bytes are copied "
+            "in. Can be repeated. Example: --add-file "
+            "'pkg-1.0.0.dist-info/build-details.json' ./details.json"
+        ),
+    )
+    edit_parser.add_argument(
+        "--add-dist-info-file",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("FILENAME", "SRC"),
+        help=(
+            "Add a new file under the wheel's .dist-info/ directory. "
+            "FILENAME is a leaf name (no slashes) — the dist-info prefix is "
+            "resolved automatically. Can be repeated. Example: "
+            "--add-dist-info-file build-details.json ./details.json"
+        ),
+    )
+
+    # --- validate subcommand ---
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Validate wheel hashes against RECORD",
+        description=(
+            "Verify every file in RECORD exists in the archive with a "
+            "matching SHA-256 hash and that no extra files appear in the "
+            "archive. Exits non-zero on any validation error."
+        ),
+    )
+    validate_parser.add_argument(
+        "wheel", type=_existing_path, help="Path to a .whl file to validate"
+    )
+    validate_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Output as JSON"
+    )
 
     return parser
 
@@ -318,6 +428,8 @@ def cli(args: Optional[List[str]] = None) -> None:
         _show(parsed)
     elif parsed.command == "edit":
         _edit(parsed)
+    elif parsed.command == "validate":
+        _validate(parsed)
 
 
 if __name__ == "__main__":

@@ -85,6 +85,11 @@ pub struct WheelEditor {
     wheel_info: WheelInfo,
     /// Files that have been modified (path -> new content)
     modified_files: HashMap<String, Vec<u8>>,
+    /// Files added to the archive (path -> content). Path is the full archive
+    /// path; if `dist_info_prefix` is renamed at save time (because name or
+    /// version changed), entries whose path begins with the old prefix are
+    /// rewritten to the new prefix.
+    added_files: HashMap<String, Vec<u8>>,
     /// Whether the wheel_info has been modified (e.g., platform tag changed)
     wheel_info_modified: bool,
 }
@@ -109,6 +114,7 @@ impl WheelEditor {
             dist_info_prefix,
             wheel_info,
             modified_files: HashMap::new(),
+            added_files: HashMap::new(),
             wheel_info_modified: false,
         })
     }
@@ -116,6 +122,34 @@ impl WheelEditor {
     /// Get the path to the wheel file
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Get the dist-info directory name as it would appear in the saved wheel.
+    ///
+    /// This reflects the **current** metadata, so if `set_name` or
+    /// `set_version` has been called the returned value matches what `save`
+    /// will write — making it safe to construct paths for `add_file` from it.
+    pub fn dist_info_dir(&self) -> String {
+        dist_info_name(&self.metadata.name, &self.metadata.version)
+    }
+
+    /// Add a new file to the archive.
+    ///
+    /// `path` is the full archive path (e.g.
+    /// `"my_pkg-1.0.0.dist-info/build-details.json"`). If the dist-info
+    /// directory is renamed at save time because of a name/version change,
+    /// paths under the old prefix are rewritten to the new prefix.
+    ///
+    /// Adding a file whose path collides with an existing entry replaces the
+    /// added-file content for that path; collisions with files in the source
+    /// archive are rejected at save time with `WheelError::InvalidWheel`.
+    pub fn add_file(&mut self, path: impl Into<String>, content: Vec<u8>) {
+        self.added_files.insert(path.into(), content);
+    }
+
+    /// True if any new files have been queued via `add_file`.
+    pub fn has_added_files(&self) -> bool {
+        !self.added_files.is_empty()
     }
 
     /// Compute the PEP 427 wheel filename from current metadata and tags.
@@ -438,9 +472,12 @@ impl WheelEditor {
         // Create output file
         let output_file = File::create(output_path)?;
 
-        // Use extended writer if we have modified files or wheel info changes
-        if !self.modified_files.is_empty() || self.wheel_info_modified {
-            // Use extended writer which handles modified files and WHEEL file updates
+        // Use extended writer if we have modified files, added files, or
+        // wheel info changes.
+        if !self.modified_files.is_empty()
+            || !self.added_files.is_empty()
+            || self.wheel_info_modified
+        {
             write_modified_extended(
                 &mut source_archive,
                 output_file,
@@ -449,6 +486,7 @@ impl WheelEditor {
                 &self.dist_info_prefix,
                 &new_dist_info,
                 &self.modified_files,
+                &self.added_files,
                 Some(&self.wheel_info),
             )?;
         } else {
@@ -723,5 +761,94 @@ mod tests {
             Some("any"),
             "platform tag should be unchanged after setting abi tag"
         );
+    }
+
+    fn read_archive_entry(path: &Path, entry_name: &str) -> Option<Vec<u8>> {
+        let file = File::open(path).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut entry = archive.by_name(entry_name).ok()?;
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut buf).unwrap();
+        Some(buf)
+    }
+
+    #[test]
+    fn test_add_file_to_dist_info() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+        let output_path = temp_dir.path().join("with_extra.whl");
+
+        let mut editor = WheelEditor::open(&wheel_path).unwrap();
+        let dist_info = editor.dist_info_dir();
+        assert_eq!(dist_info, "test_pkg-1.0.0.dist-info");
+        let payload = br#"{"vcs_name":"git","vcs_ref":"deadbeef"}"#;
+        editor.add_file(format!("{dist_info}/build-details.json"), payload.to_vec());
+        editor.save(&output_path).unwrap();
+
+        // The added entry should be present and readable.
+        let got = read_archive_entry(&output_path, "test_pkg-1.0.0.dist-info/build-details.json")
+            .expect("build-details.json should be present in saved wheel");
+        assert_eq!(got, payload);
+
+        // The wheel should pass full validation: RECORD must contain a
+        // correct hash for the new file.
+        let result = WheelEditor::open(&output_path).unwrap().validate().unwrap();
+        assert!(
+            result.is_valid(),
+            "wheel with added file should validate: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_add_file_renamed_when_version_changes() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+        let output_path = temp_dir.path().join("renamed.whl");
+
+        let mut editor = WheelEditor::open(&wheel_path).unwrap();
+        // Add using the *old* dist-info prefix, then bump version. The writer
+        // should rewrite the path to land under the new dist-info dir.
+        editor.add_file(
+            "test_pkg-1.0.0.dist-info/build-details.json",
+            b"{}".to_vec(),
+        );
+        editor.set_version("1.0.1");
+        editor.save(&output_path).unwrap();
+
+        assert!(
+            read_archive_entry(
+                &output_path,
+                "test_pkg-1.0.1.dist-info/build-details.json",
+            )
+            .is_some(),
+            "added file should be rewritten to new dist-info prefix"
+        );
+        assert!(
+            read_archive_entry(
+                &output_path,
+                "test_pkg-1.0.0.dist-info/build-details.json",
+            )
+            .is_none(),
+            "added file should not appear under old dist-info prefix"
+        );
+
+        let result = WheelEditor::open(&output_path).unwrap().validate().unwrap();
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_add_file_collision_with_source_errors() {
+        let temp_dir = TempDir::new().unwrap();
+        let wheel_path = create_test_wheel(temp_dir.path());
+        let output_path = temp_dir.path().join("collide.whl");
+
+        let mut editor = WheelEditor::open(&wheel_path).unwrap();
+        editor.add_file("test_pkg/__init__.py", b"x = 1\n".to_vec());
+        let err = editor.save(&output_path).unwrap_err();
+        match err {
+            WheelError::InvalidWheel(_) => {}
+            other => panic!("expected InvalidWheel, got {other:?}"),
+        }
     }
 }

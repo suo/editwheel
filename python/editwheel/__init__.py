@@ -9,6 +9,10 @@ performance by copying unchanged files as raw compressed bytes.
 """
 
 # Re-export from the Rust extension module
-from editwheel.editwheel import WheelEditor, normalize_dist_info_name
+from editwheel.editwheel import (
+    ValidationResult,
+    WheelEditor,
+    normalize_dist_info_name,
+)
 
-__all__ = ["WheelEditor", "normalize_dist_info_name"]
+__all__ = ["ValidationResult", "WheelEditor", "normalize_dist_info_name"]

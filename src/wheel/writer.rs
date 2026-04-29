@@ -135,11 +135,13 @@ pub fn write_modified<R: Read + Seek, W: Write + Seek>(
     Ok(())
 }
 
-/// Write a modified wheel with additional modifications (ELF files, WHEEL file)
+/// Write a modified wheel with additional modifications (ELF files, WHEEL
+/// file, newly added files).
 ///
 /// This is an extended version of `write_modified` that also handles:
 /// - Modified binary files (e.g., .so files with changed RPATH)
 /// - Modified WHEEL file (e.g., changed platform tags)
+/// - Newly added files (e.g., a `build-details.json` stamped into dist-info)
 ///
 /// # Arguments
 /// * `source` - The source wheel archive
@@ -149,6 +151,11 @@ pub fn write_modified<R: Read + Seek, W: Write + Seek>(
 /// * `old_dist_info` - The old dist-info directory name
 /// * `new_dist_info` - The new dist-info directory name
 /// * `modified_files` - Map of file paths to their modified content
+/// * `added_files` - Map of new file paths (full archive paths) to content.
+///                   Paths under `old_dist_info` / old `.data` dir are
+///                   rewritten to the new prefixes when versions change.
+///                   Collisions with files in the source archive return
+///                   `WheelError::InvalidWheel`.
 /// * `wheel_info` - Optional modified WHEEL info (if None, uses original)
 pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
     source: &mut ZipArchive<R>,
@@ -158,6 +165,7 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
     old_dist_info: &str,
     new_dist_info: &str,
     modified_files: &HashMap<String, Vec<u8>>,
+    added_files: &HashMap<String, Vec<u8>>,
     wheel_info: Option<&WheelInfo>,
 ) -> Result<(), WheelError> {
     let mut writer = ZipWriter::new(output);
@@ -180,6 +188,46 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
             .expect("old_dist_info must end with .dist-info")
     );
     let new_data_dir = data_dir_name(&metadata.name, &metadata.version);
+
+    // Closure that mirrors the dist-info / .data rename applied to source
+    // entries, so callers can use either the old or new prefix when calling
+    // `add_file`.
+    let rename_path = |name: &str| -> String {
+        if needs_rename && name.starts_with(old_dist_info) {
+            name.replacen(old_dist_info, new_dist_info, 1)
+        } else if needs_rename && name.starts_with(&old_data_dir) {
+            name.replacen(&old_data_dir, &new_data_dir, 1)
+        } else {
+            name.to_string()
+        }
+    };
+
+    // Build the final paths for added files up-front so we can detect
+    // collisions with files in the source archive before writing anything.
+    let mut added_final: HashMap<String, &Vec<u8>> = HashMap::new();
+    for (path, content) in added_files {
+        let final_path = rename_path(path);
+        if final_path == new_metadata_path
+            || final_path == new_record_path
+            || final_path == new_wheel_path
+        {
+            return Err(WheelError::InvalidWheel(format!(
+                "add_file path '{}' collides with a generated dist-info file (METADATA/RECORD/WHEEL)",
+                final_path
+            )));
+        }
+        added_final.insert(final_path, content);
+    }
+    for i in 0..source.len() {
+        let name = source.by_index_raw(i)?.name().to_string();
+        let final_name = rename_path(&name);
+        if added_final.contains_key(&final_name) {
+            return Err(WheelError::InvalidWheel(format!(
+                "add_file path '{}' collides with an existing file in the source archive",
+                final_name
+            )));
+        }
+    }
 
     // Phase 1: Copy all files, handling modifications
     for i in 0..source.len() {
@@ -296,6 +344,27 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
         Some(metadata_hash),
         Some(metadata_size),
     ));
+
+    // Phase 3.5: Write added files (e.g. build-details.json stamped into
+    // dist-info). Iterate in sorted order so RECORD output is deterministic.
+    let mut added_sorted: Vec<(&String, &&Vec<u8>)> = added_final.iter().collect();
+    added_sorted.sort_by(|a, b| a.0.cmp(b.0));
+    for (final_path, content) in added_sorted {
+        let file_options = if content.len() as u64 > 0xFFFFFFFF {
+            options.large_file(true)
+        } else {
+            options
+        };
+        writer.start_file(final_path, file_options)?;
+        writer.write_all(content)?;
+
+        let hash = hash_content(content);
+        new_record_entries.push(RecordEntry::new(
+            final_path.clone(),
+            Some(hash),
+            Some(content.len() as u64),
+        ));
+    }
 
     // Phase 4: Write new RECORD (RECORD itself has no hash)
     new_record_entries.push(RecordEntry::new(new_record_path.clone(), None, None));
@@ -527,6 +596,7 @@ mod tests {
         .unwrap();
 
         let modified_files = HashMap::new();
+        let added_files = HashMap::new();
         let mut output = Cursor::new(Vec::new());
         write_modified_extended(
             &mut source,
@@ -536,6 +606,7 @@ mod tests {
             "test_pkg-1.0.0.dist-info",
             "test_pkg-1.0.1.dist-info",
             &modified_files,
+            &added_files,
             Some(&wheel_info),
         )
         .unwrap();

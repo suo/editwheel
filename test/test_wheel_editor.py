@@ -947,3 +947,267 @@ class TestCLI:
             assert data["name"] == "test-package"
             assert data["version"] == "1.0.0"
             assert "platform_tag" in data
+            assert data["dist_info_dir"] == "test_package-1.0.0.dist-info"
+
+    def test_cli_edit_add_file(self):
+        """--add-file injects a file at the given archive path."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            src = temp_path / "build-details.json"
+            src.write_text('{"vcs_name":"git","vcs_ref":"abc123"}')
+
+            result = self._run_cli(
+                [
+                    "edit",
+                    str(test_wheel),
+                    "--add-file",
+                    "test_package-1.0.0.dist-info/build-details.json",
+                    str(src),
+                ]
+            )
+            assert result.exit_code == 0, f"CLI failed: {result.output}{result.stderr}"
+
+            with zipfile.ZipFile(test_wheel) as zf:
+                names = zf.namelist()
+                assert "test_package-1.0.0.dist-info/build-details.json" in names
+                assert (
+                    zf.read(
+                        "test_package-1.0.0.dist-info/build-details.json"
+                    ).decode()
+                    == '{"vcs_name":"git","vcs_ref":"abc123"}'
+                )
+
+            # Roundtrip through WheelEditor.validate to ensure RECORD is correct.
+            editor = WheelEditor(str(test_wheel))
+            assert editor.dist_info_dir == "test_package-1.0.0.dist-info"
+
+    def test_cli_edit_add_dist_info_file(self):
+        """--add-dist-info-file resolves the dist-info prefix automatically."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            src = temp_path / "details.json"
+            src.write_bytes(b'{"key":"val"}')
+
+            result = self._run_cli(
+                [
+                    "edit",
+                    str(test_wheel),
+                    "--add-dist-info-file",
+                    "build-details.json",
+                    str(src),
+                ]
+            )
+            assert result.exit_code == 0, f"CLI failed: {result.output}{result.stderr}"
+
+            with zipfile.ZipFile(test_wheel) as zf:
+                assert (
+                    zf.read("test_package-1.0.0.dist-info/build-details.json")
+                    == b'{"key":"val"}'
+                )
+
+    def test_cli_add_dist_info_file_rejects_nested_path(self):
+        """--add-dist-info-file should reject paths containing slashes."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            src = temp_path / "details.json"
+            src.write_bytes(b"{}")
+
+            result = self._run_cli(
+                [
+                    "edit",
+                    str(test_wheel),
+                    "--add-dist-info-file",
+                    "nested/build-details.json",
+                    str(src),
+                ]
+            )
+            assert result.exit_code != 0
+            assert "leaf filename" in result.stderr
+
+
+class TestAddFile:
+    """Tests for the WheelEditor.add_file Python API."""
+
+    def test_add_file_appears_in_archive(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+            payload = b'{"vcs_name":"hg","vcs_ref":"deadbeef"}'
+            editor.add_file(
+                f"{editor.dist_info_dir}/build-details.json", payload
+            )
+            assert editor.has_added_files()
+            output = temp_path / "out.whl"
+            editor.save(str(output))
+
+            with zipfile.ZipFile(output) as zf:
+                assert (
+                    zf.read("test_package-1.0.0.dist-info/build-details.json")
+                    == payload
+                )
+
+    def test_add_file_collision_raises(self):
+        """add_file colliding with an existing source file should error at save."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+            editor.add_file("test_package/__init__.py", b"# overwrite\n")
+
+            with pytest.raises(ValueError, match="collides"):
+                editor.save(str(temp_path / "out.whl"))
+
+    def test_add_file_collision_with_record_raises(self):
+        """add_file at RECORD path should error at save."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+            editor.add_file(
+                "test_package-1.0.0.dist-info/RECORD", b"bogus\n"
+            )
+
+            with pytest.raises(ValueError, match="generated dist-info"):
+                editor.save(str(temp_path / "out.whl"))
+
+    def test_dist_info_dir_reflects_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+            assert editor.dist_info_dir == "test_package-1.0.0.dist-info"
+            editor.version = "2.5.0"
+            assert editor.dist_info_dir == "test_package-2.5.0.dist-info"
+
+
+class TestValidate:
+    """Tests for WheelEditor.validate (Python binding)."""
+
+    def test_validate_valid_wheel(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            result = WheelEditor(str(test_wheel)).validate()
+            assert result.is_valid
+            assert result.errors == []
+            assert bool(result) is True
+            assert "valid=True" in repr(result)
+
+    def test_validate_after_add_file_roundtrip(self):
+        """Adding a file via add_file must produce a wheel that validates."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+            editor.add_file(
+                f"{editor.dist_info_dir}/build-details.json", b'{"x":1}'
+            )
+            output = temp_path / "out.whl"
+            editor.save(str(output))
+
+            result = WheelEditor(str(output)).validate()
+            assert result.is_valid, f"errors: {result.errors}"
+
+    def test_validate_detects_corruption(self):
+        """A wheel whose RECORD doesn't match its contents should fail."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            # Corrupt the wheel by overwriting __init__.py without updating RECORD.
+            with zipfile.ZipFile(test_wheel) as zf:
+                names = zf.namelist()
+                contents = {n: zf.read(n) for n in names}
+            contents["test_package/__init__.py"] = b"# corrupted\n"
+            corrupted = temp_path / "corrupted.whl"
+            with zipfile.ZipFile(corrupted, "w", zipfile.ZIP_DEFLATED) as zf:
+                for n, c in contents.items():
+                    zf.writestr(n, c)
+
+            result = WheelEditor(str(corrupted)).validate()
+            assert not result.is_valid
+            assert bool(result) is False
+            assert any("hash mismatch" in e for e in result.errors)
+            assert any("__init__.py" in e for e in result.errors)
+
+
+class TestCLIValidate:
+    """Tests for `editwheel validate` CLI subcommand."""
+
+    def _run_cli(self, args):
+        import contextlib
+        from types import SimpleNamespace
+
+        from editwheel.cli import cli
+
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        exit_code = 0
+        try:
+            with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(
+                stderr_buf
+            ):
+                cli(args)
+        except SystemExit as e:
+            exit_code = e.code if e.code is not None else 0
+
+        return SimpleNamespace(
+            exit_code=exit_code,
+            output=stdout_buf.getvalue(),
+            stderr=stderr_buf.getvalue(),
+        )
+
+    def test_cli_validate_ok(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            result = self._run_cli(["validate", str(test_wheel)])
+            assert result.exit_code == 0
+            assert "OK" in result.output
+
+    def test_cli_validate_json_ok(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            result = self._run_cli(["validate", str(test_wheel), "--json"])
+            assert result.exit_code == 0
+
+            import json
+
+            data = json.loads(result.output)
+            assert data["is_valid"] is True
+            assert data["errors"] == []
+
+    def test_cli_validate_fail(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            with zipfile.ZipFile(test_wheel) as zf:
+                names = zf.namelist()
+                contents = {n: zf.read(n) for n in names}
+            contents["test_package/__init__.py"] = b"# corrupted\n"
+            corrupted = temp_path / "corrupted.whl"
+            with zipfile.ZipFile(corrupted, "w", zipfile.ZIP_DEFLATED) as zf:
+                for n, c in contents.items():
+                    zf.writestr(n, c)
+
+            result = self._run_cli(["validate", str(corrupted)])
+            assert result.exit_code == 1
+            assert "FAIL" in result.stderr
+            assert "hash mismatch" in result.stderr
