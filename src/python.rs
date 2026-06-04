@@ -344,7 +344,6 @@ impl PyWheelEditor {
     /// Set the RPATH for files matching a glob pattern.
     ///
     /// This modifies all ELF files in the wheel that match the given glob pattern.
-    /// Uses RUNPATH (preferred over RPATH) for setting the library search path.
     ///
     /// Args:
     ///     pattern: Glob pattern to match files (e.g., "torch/lib/*.so")
@@ -358,6 +357,24 @@ impl PyWheelEditor {
     ///     15
     fn set_rpath(&mut self, pattern: &str, rpath: &str) -> PyResult<usize> {
         Ok(self.inner.set_rpath(pattern, rpath)?)
+    }
+
+    /// Set the RUNPATH for files matching a glob pattern.
+    ///
+    /// This modifies all ELF files in the wheel that match the given glob pattern.
+    ///
+    /// Args:
+    ///     pattern: Glob pattern to match files (e.g., "torch/lib/*.so")
+    ///     runpath: The new RUNPATH value (e.g., "$ORIGIN:$ORIGIN/../lib")
+    ///
+    /// Returns:
+    ///     Number of files modified
+    ///
+    /// Example:
+    ///     >>> editor.set_runpath("torch/lib/*.so", "$ORIGIN:$ORIGIN/../../nccl_lib/lib")
+    ///     15
+    fn set_runpath(&mut self, pattern: &str, runpath: &str) -> PyResult<usize> {
+        Ok(self.inner.set_runpath(pattern, runpath)?)
     }
 
     /// Add a dependency (Requires-Dist) to the wheel.
@@ -428,7 +445,7 @@ impl PyWheelEditor {
 
     /// Check if any files have been modified.
     ///
-    /// Returns True if any ELF files have been modified (e.g., via set_rpath).
+    /// Returns True if any ELF files have been modified (e.g., via set_rpath or set_runpath).
     fn has_modified_files(&self) -> bool {
         self.inner.has_modified_files()
     }

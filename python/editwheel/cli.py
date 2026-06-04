@@ -163,6 +163,18 @@ def _edit(args: argparse.Namespace) -> None:
                 print(f"Error setting RPATH for '{pattern}': {e}", file=sys.stderr)
                 sys.exit(1)
 
+    # Handle RUNPATH modifications
+    if args.set_runpath:
+        for pattern, runpath in args.set_runpath:
+            try:
+                count = editor.set_runpath(pattern, runpath)
+                print(f"Set RUNPATH on {count} file(s) matching '{pattern}'")
+                if count > 0:
+                    changes_made = True
+            except Exception as e:
+                print(f"Error setting RUNPATH for '{pattern}': {e}", file=sys.stderr)
+                sys.exit(1)
+
     # Handle platform tag
     if args.platform_tag is not None:
         editor.platform_tag = args.platform_tag
@@ -354,6 +366,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Set RPATH for ELF files matching PATTERN. Can be repeated. "
             "Example: --set-rpath 'torch/lib/*.so' '$ORIGIN'"
+        ),
+    )
+    edit_parser.add_argument(
+        "--set-runpath",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("PATTERN", "RUNPATH"),
+        help=(
+            "Set RUNPATH for ELF files matching PATTERN. Can be repeated. "
+            "Example: --set-runpath 'torch/lib/*.so' '$ORIGIN'"
         ),
     )
     edit_parser.add_argument(

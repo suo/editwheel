@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-06-04
+
+### Added
+
+- `WheelEditor.set_runpath(pattern, runpath)` and `editwheel edit --set-runpath PATTERN RUNPATH` for editing ELF `DT_RUNPATH` entries explicitly.
+
+### Fixed
+
+- `WheelEditor.set_rpath(pattern, rpath)` and `editwheel edit --set-rpath PATTERN RPATH` now edit ELF `DT_RPATH` entries instead of writing `DT_RUNPATH`.
+
 ## [0.3.0] - 2026-04-29
 
 ### Added

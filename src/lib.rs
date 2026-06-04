@@ -370,20 +370,11 @@ impl WheelEditor {
         elf::get_rpath(&content).map_err(WheelError::from)
     }
 
-    /// Set the RPATH for files matching a glob pattern
-    ///
-    /// This modifies all ELF files in the wheel that match the given glob pattern.
-    /// Returns the number of files modified.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use editwheel::WheelEditor;
-    ///
-    /// let mut editor = WheelEditor::open("torch-2.0.0-cp311-cp311-linux_x86_64.whl").unwrap();
-    /// let count = editor.set_rpath("torch/lib/*.so", "$ORIGIN:$ORIGIN/../lib").unwrap();
-    /// println!("Modified {} files", count);
-    /// ```
-    pub fn set_rpath(&mut self, pattern: &str, rpath: &str) -> Result<usize, WheelError> {
+    fn set_elf_dynamic_tag(
+        &mut self,
+        pattern: &str,
+        modification: ElfModification,
+    ) -> Result<usize, WheelError> {
         let glob_pattern = glob::Pattern::new(pattern)?;
 
         // Open the archive to find matching files
@@ -415,8 +406,7 @@ impl WheelEditor {
                 continue; // Skip non-ELF files
             }
 
-            // Modify the ELF file - use RUNPATH (preferred over RPATH)
-            let modifications = vec![ElfModification::SetRunpath(rpath.to_string())];
+            let modifications = vec![modification.clone()];
             match elf::modify_elf(&content, &modifications) {
                 Ok(modified_content) => {
                     self.modified_files.insert(file_path, modified_content);
@@ -430,6 +420,31 @@ impl WheelEditor {
         }
 
         Ok(modified_count)
+    }
+
+    /// Set the RPATH for files matching a glob pattern
+    ///
+    /// This modifies all ELF files in the wheel that match the given glob pattern.
+    /// Returns the number of files modified.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use editwheel::WheelEditor;
+    ///
+    /// let mut editor = WheelEditor::open("torch-2.0.0-cp311-cp311-linux_x86_64.whl").unwrap();
+    /// let count = editor.set_rpath("torch/lib/*.so", "$ORIGIN:$ORIGIN/../lib").unwrap();
+    /// println!("Modified {} files", count);
+    /// ```
+    pub fn set_rpath(&mut self, pattern: &str, rpath: &str) -> Result<usize, WheelError> {
+        self.set_elf_dynamic_tag(pattern, ElfModification::SetRpath(rpath.to_string()))
+    }
+
+    /// Set the RUNPATH for files matching a glob pattern
+    ///
+    /// This modifies all ELF files in the wheel that match the given glob pattern.
+    /// Returns the number of files modified.
+    pub fn set_runpath(&mut self, pattern: &str, runpath: &str) -> Result<usize, WheelError> {
+        self.set_elf_dynamic_tag(pattern, ElfModification::SetRunpath(runpath.to_string()))
     }
 
     /// Check if any files have been modified
@@ -457,7 +472,7 @@ impl WheelEditor {
     ///
     /// This achieves constant-time performance by copying unchanged files
     /// as raw compressed bytes. Modified files (METADATA, RECORD, and any
-    /// ELF files with changed RPATH) are rewritten with new content.
+    /// ELF files with changed RPATH/RUNPATH) are rewritten with new content.
     pub fn save(&self, output_path: impl AsRef<Path>) -> Result<(), WheelError> {
         let output_path = output_path.as_ref();
 

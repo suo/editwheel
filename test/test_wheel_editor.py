@@ -12,6 +12,10 @@ import base64
 import csv
 import hashlib
 import io
+import re
+import shutil
+import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -92,6 +96,99 @@ Tag: py3-none-any
         zf.writestr("test_package-1.0.0.dist-info/RECORD", output.getvalue())
 
     return wheel_path
+
+
+def create_native_test_wheel(temp_dir: Path, shared_lib: Path) -> Path:
+    """Create a minimal wheel containing one ELF shared library."""
+    wheel_path = temp_dir / "test_package-1.0.0-py3-none-linux_x86_64.whl"
+
+    files_to_add = {
+        "test_package/__init__.py": b"# Test package\n",
+        "test_package/native.so": shared_lib.read_bytes(),
+        "test_package-1.0.0.dist-info/METADATA": b"""Metadata-Version: 2.1
+Name: test-package
+Version: 1.0.0
+Summary: A native test package
+""",
+        "test_package-1.0.0.dist-info/WHEEL": b"""Wheel-Version: 1.0
+Generator: test-wheel-creator (1.0.0)
+Root-Is-Purelib: false
+Tag: py3-none-linux_x86_64
+""",
+    }
+
+    record_entries = []
+    for filename, content in files_to_add.items():
+        hash_digest = hashlib.sha256(content).digest()
+        hash_str = base64.urlsafe_b64encode(hash_digest).decode("ascii").rstrip("=")
+        record_entries.append([filename, f"sha256={hash_str}", str(len(content))])
+    record_entries.append(["test_package-1.0.0.dist-info/RECORD", "", ""])
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerows(record_entries)
+    files_to_add["test_package-1.0.0.dist-info/RECORD"] = output.getvalue().encode(
+        "utf-8"
+    )
+
+    with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for filename, content in files_to_add.items():
+            zf.writestr(filename, content)
+
+    return wheel_path
+
+
+def require_elf_toolchain() -> None:
+    """Skip the test if the local toolchain cannot build/read ELF fixtures."""
+    missing = [tool for tool in ("cc", "readelf") if shutil.which(tool) is None]
+    if missing:
+        pytest.skip(f"missing ELF test tool(s): {', '.join(missing)}")
+
+
+def compile_shared_library(output: Path, tag_kind: str, rpath: str) -> None:
+    source = output.with_suffix(".c")
+    source.write_text("int editwheel_test_symbol(void) { return 42; }\n")
+
+    tag_flag = {
+        "rpath": "-Wl,--disable-new-dtags",
+        "runpath": "-Wl,--enable-new-dtags",
+    }[tag_kind]
+    result = subprocess.run(
+        [
+            "cc",
+            "-shared",
+            "-fPIC",
+            str(source),
+            tag_flag,
+            f"-Wl,-rpath,{rpath}",
+            "-o",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"could not compile ELF fixture: {result.stderr}")
+
+
+def extract_dynamic_tags(elf_path: Path):
+    result = subprocess.run(
+        ["readelf", "-d", str(elf_path)],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    tags = {}
+    for line in result.stdout.splitlines():
+        match = re.search(r"\((RPATH|RUNPATH)\).*?\[(.*)\]", line)
+        if match:
+            tags[match.group(1)] = match.group(2)
+    return tags
+
+
+def extract_wheel_file(wheel_path: Path, member: str, output: Path) -> None:
+    with zipfile.ZipFile(wheel_path) as zf:
+        output.write_bytes(zf.read(member))
 
 
 class TestNormalizeDistInfoName:
@@ -709,6 +806,18 @@ class TestRpathOperations:
             assert count == 0
             assert not editor.has_modified_files()
 
+    def test_set_runpath_no_so_files(self):
+        """Test set_runpath on a wheel with no .so files."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_wheel = create_test_wheel(temp_path)
+
+            editor = WheelEditor(str(test_wheel))
+
+            count = editor.set_runpath("*.so", "$ORIGIN")
+            assert count == 0
+            assert not editor.has_modified_files()
+
     def test_has_modified_files(self):
         """Test has_modified_files() method."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -723,6 +832,113 @@ class TestRpathOperations:
             # After failed RPATH set (no matching files), still no modified files
             editor.set_rpath("nonexistent/*.so", "$ORIGIN")
             assert not editor.has_modified_files()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="ELF dynamic tag tests require Linux")
+class TestElfDynamicTagEditing:
+    """Tests that RPATH and RUNPATH edits write the intended ELF tag."""
+
+    def test_set_rpath_edits_rpath_not_runpath(self):
+        require_elf_toolchain()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            shared_lib = temp_path / "native.so"
+            compile_shared_library(shared_lib, "rpath", "$ORIGIN/old_rpath")
+            test_wheel = create_native_test_wheel(temp_path, shared_lib)
+
+            editor = WheelEditor(str(test_wheel))
+            count = editor.set_rpath("test_package/*.so", "$ORIGIN/new_rpath")
+            assert count == 1
+
+            output_wheel = temp_path / "edited.whl"
+            editor.save(str(output_wheel))
+
+            edited_lib = temp_path / "edited_rpath.so"
+            extract_wheel_file(output_wheel, "test_package/native.so", edited_lib)
+            tags = extract_dynamic_tags(edited_lib)
+
+            assert tags.get("RPATH") == "$ORIGIN/new_rpath"
+            assert "RUNPATH" not in tags
+
+    def test_set_runpath_edits_runpath_not_rpath(self):
+        require_elf_toolchain()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            shared_lib = temp_path / "native.so"
+            compile_shared_library(shared_lib, "runpath", "$ORIGIN/old_runpath")
+            test_wheel = create_native_test_wheel(temp_path, shared_lib)
+
+            editor = WheelEditor(str(test_wheel))
+            count = editor.set_runpath("test_package/*.so", "$ORIGIN/new_runpath")
+            assert count == 1
+
+            output_wheel = temp_path / "edited.whl"
+            editor.save(str(output_wheel))
+
+            edited_lib = temp_path / "edited_runpath.so"
+            extract_wheel_file(output_wheel, "test_package/native.so", edited_lib)
+            tags = extract_dynamic_tags(edited_lib)
+
+            assert tags.get("RUNPATH") == "$ORIGIN/new_runpath"
+            assert "RPATH" not in tags
+
+    def test_cli_set_runpath_edits_runpath(self):
+        require_elf_toolchain()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            shared_lib = temp_path / "native.so"
+            compile_shared_library(shared_lib, "runpath", "$ORIGIN/old_runpath")
+            test_wheel = create_native_test_wheel(temp_path, shared_lib)
+            output_wheel = temp_path / "cli-edited.whl"
+
+            result = TestCLI()._run_cli(
+                [
+                    "edit",
+                    str(test_wheel),
+                    "--set-runpath",
+                    "test_package/*.so",
+                    "$ORIGIN/cli_runpath",
+                    "-o",
+                    str(output_wheel),
+                ]
+            )
+            assert result.exit_code == 0, f"CLI failed: {result.output}{result.stderr}"
+
+            edited_lib = temp_path / "cli_edited_runpath.so"
+            extract_wheel_file(output_wheel, "test_package/native.so", edited_lib)
+            tags = extract_dynamic_tags(edited_lib)
+
+            assert tags.get("RUNPATH") == "$ORIGIN/cli_runpath"
+            assert "RPATH" not in tags
+
+    def test_cli_set_rpath_edits_rpath(self):
+        require_elf_toolchain()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            shared_lib = temp_path / "native.so"
+            compile_shared_library(shared_lib, "rpath", "$ORIGIN/old_rpath")
+            test_wheel = create_native_test_wheel(temp_path, shared_lib)
+            output_wheel = temp_path / "cli-edited.whl"
+
+            result = TestCLI()._run_cli(
+                [
+                    "edit",
+                    str(test_wheel),
+                    "--set-rpath",
+                    "test_package/*.so",
+                    "$ORIGIN/cli_rpath",
+                    "-o",
+                    str(output_wheel),
+                ]
+            )
+            assert result.exit_code == 0, f"CLI failed: {result.output}{result.stderr}"
+
+            edited_lib = temp_path / "cli_edited_rpath.so"
+            extract_wheel_file(output_wheel, "test_package/native.so", edited_lib)
+            tags = extract_dynamic_tags(edited_lib)
+
+            assert tags.get("RPATH") == "$ORIGIN/cli_rpath"
+            assert "RUNPATH" not in tags
 
 
 class TestAddRequiresDist:

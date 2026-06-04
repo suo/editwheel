@@ -79,6 +79,9 @@ editor = WheelEditor("torch-2.0.0-cp311-cp311-linux_x86_64.whl")
 count = editor.set_rpath("torch/lib/*.so", "$ORIGIN:$ORIGIN/../lib")
 print(f"Modified {count} files")
 
+# Set RUNPATH explicitly
+count = editor.set_runpath("torch/lib/*.so", "$ORIGIN:$ORIGIN/../lib")
+
 # Get RPATH of a specific file
 rpath = editor.get_rpath("torch/lib/libtorch.so")
 
@@ -131,6 +134,9 @@ editwheel edit mypackage.whl --add-requires-dist "click>=8.0"
 # Set RPATH on native extensions
 editwheel edit torch.whl --set-rpath 'torch/lib/*.so' '$ORIGIN:$ORIGIN/../lib'
 
+# Set RUNPATH on native extensions
+editwheel edit torch.whl --set-runpath 'torch/lib/*.so' '$ORIGIN:$ORIGIN/../lib'
+
 # Change platform tag
 editwheel edit torch.whl --platform-tag manylinux_2_28_x86_64
 
@@ -159,6 +165,7 @@ editwheel edit torch.whl \
 | `--add-requires-dist` | Add a dependency (repeatable) |
 | `--set-requires-dist` | Replace all dependencies (comma-separated) |
 | `--set-rpath PATTERN RPATH` | Set RPATH for ELF files matching pattern (repeatable) |
+| `--set-runpath PATTERN RUNPATH` | Set RUNPATH for ELF files matching pattern (repeatable) |
 | `--platform-tag` | Set platform tag in WHEEL file |
 
 ### Rust
