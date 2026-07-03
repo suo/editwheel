@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-07-03
+
+### Fixed
+
+- Rewritten ELF entries (`set_rpath` / `set_runpath`) now preserve the source zip entry's unix mode. Previously the rewritten entry was stored with default 0644 permissions, so executables shipped in wheels (e.g. `torch/bin/torch_shm_manager`) lost their executable bit after an RPATH edit and were installed non-executable by pip/uv.
+
 ## [0.3.1] - 2026-06-04
 
 ### Added
