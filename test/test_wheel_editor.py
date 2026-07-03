@@ -133,7 +133,13 @@ Tag: py3-none-linux_x86_64
 
     with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for filename, content in files_to_add.items():
-            zf.writestr(filename, content)
+            # Real wheels ship native binaries 0755; store the mode so tests
+            # can assert it survives editing.
+            info = zipfile.ZipInfo(filename)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            mode = 0o755 if filename.endswith(".so") else 0o644
+            info.external_attr = (0o100000 | mode) << 16
+            zf.writestr(info, content)
 
     return wheel_path
 
@@ -859,6 +865,35 @@ class TestElfDynamicTagEditing:
 
             assert tags.get("RPATH") == "$ORIGIN/new_rpath"
             assert "RUNPATH" not in tags
+
+    def test_set_rpath_preserves_unix_mode(self):
+        """The rewritten entry must keep the source's unix mode (e.g. +x).
+
+        Executables shipped in wheels (like torch/bin/torch_shm_manager) go
+        through the same modified-files path as .so files; dropping the mode
+        makes pip/uv install them non-executable.
+        """
+        require_elf_toolchain()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            shared_lib = temp_path / "native.so"
+            compile_shared_library(shared_lib, "rpath", "$ORIGIN/old_rpath")
+            test_wheel = create_native_test_wheel(temp_path, shared_lib)
+
+            with zipfile.ZipFile(test_wheel) as zf:
+                info = zf.getinfo("test_package/native.so")
+                assert (info.external_attr >> 16) & 0o777 == 0o755
+
+            editor = WheelEditor(str(test_wheel))
+            count = editor.set_rpath("test_package/*.so", "$ORIGIN/new_rpath")
+            assert count == 1
+
+            output_wheel = temp_path / "edited.whl"
+            editor.save(str(output_wheel))
+
+            with zipfile.ZipFile(output_wheel) as zf:
+                info = zf.getinfo("test_package/native.so")
+                assert (info.external_attr >> 16) & 0o777 == 0o755
 
     def test_set_runpath_edits_runpath_not_rpath(self):
         require_elf_toolchain()

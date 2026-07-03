@@ -255,14 +255,20 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
 
         // Check if this file has been modified
         if let Some(modified_content) = modified_files.get(&name) {
-            // Write the modified content
+            // Write the modified content, preserving the source entry's unix
+            // mode — executables (e.g. torch/bin/torch_shm_manager) must keep
+            // their +x bit through an RPATH rewrite.
+            let unix_mode = entry.unix_mode();
             drop(entry); // Release the raw entry
             // Enable ZIP64 for large files (>4GB)
-            let file_options = if modified_content.len() as u64 > 0xFFFFFFFF {
+            let mut file_options = if modified_content.len() as u64 > 0xFFFFFFFF {
                 options.large_file(true)
             } else {
                 options
             };
+            if let Some(mode) = unix_mode {
+                file_options = file_options.unix_permissions(mode);
+            }
             writer.start_file(&new_name, file_options)?;
             writer.write_all(modified_content)?;
 
@@ -291,6 +297,7 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
             } else {
                 // File not in RECORD - need to compute hash (rare case)
                 // First drop the raw entry, then read the decompressed content
+                let unix_mode = entry.unix_mode();
                 drop(entry);
                 let mut decompressed = source.by_index(i)?;
                 let mut content = Vec::new();
@@ -298,11 +305,15 @@ pub fn write_modified_extended<R: Read + Seek, W: Write + Seek>(
                 let hash = hash_content(&content);
 
                 // Write the content normally, enabling ZIP64 for large files
-                let file_options = if content.len() as u64 > 0xFFFFFFFF {
+                // and preserving the source entry's unix mode.
+                let mut file_options = if content.len() as u64 > 0xFFFFFFFF {
                     options.large_file(true)
                 } else {
                     options
                 };
+                if let Some(mode) = unix_mode {
+                    file_options = file_options.unix_permissions(mode);
+                }
                 writer.start_file(&new_name, file_options)?;
                 writer.write_all(&content)?;
 
